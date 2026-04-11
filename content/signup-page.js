@@ -279,18 +279,22 @@ async function step3_fillEmailPassword(payload) {
   fillInput(passwordInput, payload.password);
   log('Step 3: Password filled');
 
-  // Submit the form first
+  // Report complete BEFORE submitting to avoid message channel closure
+  reportComplete(3, { email });
+  log('Step 3: Completed successfully, submitting form...');
+
+  // Submit the form
   await sleepRandom(450, 900);
   const submitBtn = document.querySelector('button[type="submit"]')
     || await waitForElementByText('button', /continue|sign\s*up|submit|注册|创建|create/i, 5000).catch(() => null);
 
   if (submitBtn) {
     simulateClick(submitBtn);
-    log('Step 3: Form submitted, waiting for response...');
+    log('Step 3: Form submitted, page will navigate to verification code page');
   }
   
-  // Wait and check for errors (e.g., "account already exists")
-  await sleepRandom(1500, 2500);
+  // Wait briefly to check for errors before page navigates
+  await sleepRandom(1000, 1500);
   
   // Check for error messages indicating account already exists
   const errorSelectors = [
@@ -323,9 +327,8 @@ async function step3_fillEmailPassword(payload) {
     }
   }
   
-  // Report complete after checking for errors
-  reportComplete(3, { email });
-  log('Step 3: Completed successfully');
+  // If no errors detected, the page should navigate to verification code page
+  // Step 3 is already reported as complete above
 }
 
 // ============================================================
