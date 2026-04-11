@@ -340,6 +340,32 @@ async function registerTab(source, tabId) {
   registry[source] = { tabId, ready: true };
   await setState({ tabRegistry: registry });
   console.log(LOG_PREFIX, `Tab registered: ${source} -> ${tabId}`);
+  
+  // 检查是否需要重新执行 Step 3（页面重新加载后）
+  if (source === 'signup-page') {
+    const state = await getState();
+    if (state.step3NeedsRetry && state.currentStep === 3) {
+      await addLog('Page reloaded, retrying Step 3...', 'info');
+      await setState({ step3NeedsRetry: false });
+      
+      // 等待一下让页面完全加载
+      await sleepRandom(1000, 1500);
+      
+      // 重新执行 Step 3
+      try {
+        await sendToContentScript('signup-page', {
+          type: 'EXECUTE_STEP',
+          step: 3,
+          source: 'background',
+          payload: { email: state.email, password: state.password },
+        });
+      } catch (err) {
+        await addLog(`Failed to retry Step 3: ${err.message}`, 'error');
+        await setStepStatus(3, 'failed');
+        notifyStepError(3, err.message);
+      }
+    }
+  }
 }
 
 async function isTabAlive(source) {
@@ -714,6 +740,27 @@ async function handleMessage(message, sender) {
       return { ok: true };
     }
 
+    case 'PAGE_RELOADING': {
+      // 页面即将重新加载（由全局错误监测器触发）
+      await addLog(`[${message.source}] Page is reloading due to error retry`, 'warn');
+      
+      // 标记 tab 为 not ready，等待页面重新加载后重新注册
+      const registry = await getTabRegistry();
+      if (registry[message.source]) {
+        registry[message.source].ready = false;
+        await setState({ tabRegistry: registry });
+      }
+      
+      // 设置一个标志，表示需要在页面重新加载后重新执行当前步骤
+      const state = await getState();
+      if (state.currentStep === 3) {
+        await setState({ step3NeedsRetry: true });
+        await addLog('Step 3 will be retried after page reload', 'info');
+      }
+      
+      return { ok: true };
+    }
+
     case 'LOG': {
       const { message: msg, level } = message.payload;
       await addLog(`[${message.source}] ${msg}`, level);
@@ -725,6 +772,12 @@ async function handleMessage(message, sender) {
       await addLog(`Step ${message.step} completed`, 'ok');
       await handleStepData(message.step, message.payload);
       notifyStepComplete(message.step, message.payload);
+      
+      // 清除重试标志
+      if (message.step === 3) {
+        await setState({ step3NeedsRetry: false });
+      }
+      
       return { ok: true };
     }
 
@@ -2174,6 +2227,24 @@ async function executeStep8(state) {
             await addLog(`Step 8: 检测到页面已跳转，停止重试`, 'ok');
             clickSuccess = true;
             break;
+          }
+          
+          // 在点击前检查当前页面 URL，如果已经是 add-phone 则停止
+          try {
+            const currentTab = await chrome.tabs.get(signupTabId);
+            if (currentTab.url && currentTab.url.includes('/add-phone')) {
+              await addLog(`Step 8: 检测到当前页面已是 add-phone，停止点击尝试`, 'warn');
+              resolved = true;
+              cleanupListener();
+              await setState({ registrationFailed: true, failureReason: 'phone_verification_required' });
+              await addLog(`Step 8: Registration failed - phone verification required (add-phone page detected)`, 'warn');
+              await addLog(`Step 8: Skipping Step 9, will restart registration flow...`, 'info');
+              await setStepStatus(8, 'completed');
+              resolve({ addPhoneDetected: true });
+              return;
+            }
+          } catch (tabErr) {
+            await addLog(`Step 8: 无法检查当前页面 URL: ${tabErr.message}`, 'warn');
           }
           
           try {

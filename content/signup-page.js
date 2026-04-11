@@ -40,6 +40,13 @@ function startErrorMonitor() {
         
         if (retryButton) {
           log('Found retry button, clicking...', 'info');
+          
+          // 在点击重试前，通知 background 页面即将重新加载
+          chrome.runtime.sendMessage({
+            type: 'PAGE_RELOADING',
+            source: 'signup-page',
+          }).catch(() => {});
+          
           retryButton.click();
           log('Clicked retry button, page should reload', 'ok');
         } else {
@@ -270,7 +277,14 @@ async function step3_fillEmailPassword(payload) {
 
     try {
       passwordInput = await waitForElement('input[type="password"]', 10000);
-    } catch {
+    } catch (err) {
+      // 如果找不到密码字段，可能是页面重新加载了，检查是否回到了邮箱输入页面
+      const emailInputAgain = document.querySelector('input[type="email"], input[name="email"]');
+      if (emailInputAgain && !emailInputAgain.value) {
+        log('Step 3: Page reloaded, email field is empty. Retrying from beginning...', 'warn');
+        // 递归重试 Step 3
+        return await step3_fillEmailPassword(payload);
+      }
       throw new Error('Could not find password input after submitting email. URL: ' + location.href);
     }
   }
