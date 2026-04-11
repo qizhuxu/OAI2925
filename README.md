@@ -422,6 +422,10 @@ MIT License - 详见 [LICENSE](LICENSE) 文件
 
 **注意**：本工具不隶属于 OpenAI 或 2925.com，仅为个人开发的自动化工具。
 
+## 社区
+
+- [LinuxDo 讨论帖](https://linux.do) - 欢迎在 LinuxDo 社区讨论和反馈
+
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=qizhuxu/OAI2925&type=Date)](https://star-history.com/#qizhuxu/OAI2925&Date)
