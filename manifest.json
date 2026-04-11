@@ -1,0 +1,55 @@
+{
+  "manifest_version": 3,
+  "name": "OAI2925",
+  "version": "1.0.0",
+  "description": "OpenAI 自动注册工具 - 2925 邮箱专用",
+  "permissions": [
+    "sidePanel",
+    "tabs",
+    "webNavigation",
+    "storage",
+    "scripting",
+    "activeTab",
+    "downloads",
+    "debugger"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "sidepanel/sidepanel.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://auth0.openai.com/*",
+        "https://auth.openai.com/*",
+        "https://accounts.openai.com/*"
+      ],
+      "js": ["content/utils.js", "content/signup-page.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://2925.com/*"
+      ],
+      "js": ["content/utils.js", "content/mail-2925.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

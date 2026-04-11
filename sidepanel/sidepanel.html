@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OAI2925</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <header>
+    <div class="header-left">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+      </svg>
+      <h1>OAI2925</h1>
+    </div>
+    <div class="header-btns">
+      <div class="run-group">
+        <input type="number" id="input-run-count" class="run-count-input" value="1" min="1" max="50" title="运行次数" />
+        <button id="btn-auto-run" class="btn btn-success" title="自动执行全部步骤">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          自动
+        </button>
+      </div>
+      <button id="btn-reset" class="btn btn-ghost" title="重置全部步骤">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+        </svg>
+      </button>
+      <button id="btn-theme" class="theme-toggle" title="切换主题">
+        <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+        <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <section id="data-section">
+    <div class="data-card">
+      <div class="mode-selector-section">
+        <div class="data-row">
+          <span class="data-label">运行模式</span>
+          <select id="select-run-mode" class="mode-select">
+            <option value="cpa">CPA 模式（使用 CPA 接口）</option>
+            <option value="local">本地模式（不使用 CPA 接口）</option>
+          </select>
+        </div>
+      </div>
+      <div id="cpa-interface-row" class="data-row">
+        <span class="data-label">CPA 接口</span>
+        <div class="data-input-group">
+          <input type="password" id="input-vps-url" class="data-input" placeholder="http://ip:port/management.html#/oauth" />
+          <button id="btn-toggle-vps-url" class="btn-icon" title="显示/隐藏">
+            <svg class="icon-eye" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+            <svg class="icon-eye-off" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;">
+              <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+              <line x1="1" y1="1" x2="23" y2="23"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div class="data-row">
+        <span class="data-label">邮箱前缀</span>
+        <input type="text" id="input-email-prefix" class="data-input" placeholder="输入前缀，如 abc (将生成 abc_xxxx@2925.com)" />
+      </div>
+      <div class="data-row">
+        <span class="data-label">生成邮箱</span>
+        <div class="data-value-group">
+          <span id="display-generated-email" class="data-value mono truncate">等待生成...</span>
+          <button id="btn-copy-email" class="btn-icon" title="复制邮箱" style="display:none;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div class="data-row">
+        <span class="data-label">生成密码</span>
+        <div class="data-value-group">
+          <span id="display-generated-password" class="data-value mono truncate">等待生成...</span>
+          <button id="btn-copy-password" class="btn-icon" title="复制密码" style="display:none;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div class="data-row">
+        <span class="data-label">OAuth</span>
+        <div class="data-value-group">
+          <span id="display-oauth-url" class="data-value mono truncate">等待中...</span>
+          <button id="btn-copy-oauth" class="btn-icon" title="复制 OAuth URL" style="display:none;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div class="data-row">
+        <span class="data-label">回调</span>
+        <div class="data-value-group">
+          <span id="display-localhost-url" class="data-value mono truncate">等待中...</span>
+          <button id="btn-copy-callback" class="btn-icon" title="复制回调 URL" style="display:none;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+    <div id="status-bar" class="status-bar">
+      <div class="status-dot"></div>
+      <span id="display-status">就绪</span>
+    </div>
+    
+    <div class="save-local-section">
+      <div class="save-local-header">
+        <label class="checkbox-label">
+          <input type="checkbox" id="checkbox-save-local" />
+          <span>保存账号信息到本地</span>
+        </label>
+      </div>
+      
+      <!-- 本地模式：文件夹选择器 -->
+      <div id="local-mode-config" style="display:none;">
+        <div class="folder-selector-group">
+          <button id="btn-select-folder" class="btn btn-secondary btn-sm">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+            </svg>
+            选择文件夹
+          </button>
+          <span id="selected-folder-path" class="folder-path">未选择</span>
+        </div>
+      </div>
+      
+      <!-- CPA 模式：文件夹选择器 + CPA 管理密钥 -->
+      <div id="cpa-mode-config" style="display:none;">
+        <div class="folder-selector-group">
+          <button id="btn-select-folder-cpa" class="btn btn-secondary btn-sm">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+            </svg>
+            选择文件夹
+          </button>
+          <span id="selected-folder-path-cpa" class="folder-path">未选择</span>
+        </div>
+        <div class="cpa-key-input-group">
+          <div class="data-row">
+            <span class="data-label">CPA 管理密钥</span>
+            <div class="data-input-group">
+              <input type="password" id="input-cpa-key" class="data-input" placeholder="" />
+              <button id="btn-toggle-cpa-key" class="btn-icon" title="显示/隐藏">
+                <svg class="icon-eye" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                  <circle cx="12" cy="12" r="3"/>
+                </svg>
+                <svg class="icon-eye-off" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;">
+                  <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+                  <line x1="1" y1="1" x2="23" y2="23"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <div class="incognito-section">
+      <label class="checkbox-label">
+        <input type="checkbox" id="checkbox-incognito-mode" />
+        <span>无痕模式</span>
+        <span class="checkbox-hint">（OpenAI 相关操作在无痕窗口中进行）</span>
+      </label>
+    </div>
+    
+    <div id="auto-continue-bar" class="auto-continue-bar" style="display:none;">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      <span class="auto-hint">先粘贴邮箱，再继续</span>
+      <button id="btn-auto-continue" class="btn btn-primary btn-sm">继续</button>
+    </div>
+    <div id="manual-intervention-bar" class="manual-intervention-bar" style="display:none;">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      <span id="manual-intervention-text" class="manual-hint">当前步骤需要人工介入，处理完成后继续下一步</span>
+      <button id="btn-manual-continue" class="btn btn-primary btn-sm">人工处理完成，继续下一步</button>
+    </div>
+  </section>
+
+  <section id="steps-section">
+    <div class="steps-header">
+      <span class="section-label">流程</span>
+      <div class="steps-actions">
+        <button id="btn-stop-flow" class="btn btn-ghost btn-xs" title="停止流程" style="display:none;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+            <rect x="6" y="6" width="12" height="12"/>
+          </svg>
+          停止
+        </button>
+        <button id="btn-resume-flow" class="btn btn-primary btn-xs" title="继续流程" style="display:none;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+            <polygon points="5 3 19 12 5 21 5 3"/>
+          </svg>
+          继续
+        </button>
+        <span id="steps-progress" class="steps-progress">0 / 9</span>
+      </div>
+    </div>
+    <div class="steps-list">
+      <div class="step-row" data-step="1">
+        <div class="step-indicator" data-step="1"><span class="step-num">1</span></div>
+        <button class="step-btn" data-step="1">获取 OAuth 链接</button>
+        <button class="step-retry-btn" data-step="1" style="display:none;" title="重试此步骤">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+          </svg>
+        </button>
+        <span class="step-status" data-step="1"></span>
+      </div>
+      <div class="step-row" data-step="2">
+        <div class="step-indicator" data-step="2"><span class="step-num">2</span></div>
+        <button class="step-btn" data-step="2">打开注册页</button>
+        <button class="step-retry-btn" data-step="2" style="display:none;" title="重试此步骤">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+          </svg>
+        </button>
+        <span class="step-status" data-step="2"></span>
+      </div>
+      <div class="step-row" data-step="3">
+        <div class="step-indicator" data-step="3"><span class="step-num">3</span></div>
+        <button class="step-btn" data-step="3">填写邮箱 / 密码</button>
+        <button class="step-retry-btn" data-step="3" style="display:none;" title="重试此步骤">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+          </svg>
+        </button>
+        <span class="step-status" data-step="3"></span>
+      </div>
+      <div class="step-row" data-step="4">
+        <div class="step-indicator" data-step="4"><span class="step-num">4</span></div>
+        <button class="step-btn" data-step="4">获取注册验证码</button>
+        <button class="step-retry-btn" data-step="4" style="display:none;" title="重试此步骤">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+          </svg>
+        </button>
+        <span class="step-status" data-step="4"></span>
+      </div>
+      <div class="step-row" data-step="5">
+        <div class="step-indicator" data-step="5"><span class="step-num">5</span></div>
+        <button class="step-btn" data-step="5">填写姓名 / 生日</button>
+        <button class="step-retry-btn" data-step="5" style="display:none;" title="重试此步骤">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+          </svg>
+        </button>
+        <span class="step-status" data-step="5"></span>
+      </div>
+      <div class="step-row" data-step="6">
+        <div class="step-indicator" data-step="6"><span class="step-num">6</span></div>
+        <button class="step-btn" data-step="6">OAuth 登录</button>
+        <button class="step-retry-btn" data-step="6" style="display:none;" title="重试此步骤">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+          </svg>
+        </button>
+        <span class="step-status" data-step="6"></span>
+      </div>
+      <div class="step-row" data-step="7">
+        <div class="step-indicator" data-step="7"><span class="step-num">7</span></div>
+        <button class="step-btn" data-step="7">获取登录验证码</button>
+        <button class="step-retry-btn" data-step="7" style="display:none;" title="重试此步骤">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+          </svg>
+        </button>
+        <span class="step-status" data-step="7"></span>
+      </div>
+      <div class="step-row" data-step="8">
+        <div class="step-indicator" data-step="8"><span class="step-num">8</span></div>
+        <button class="step-btn" data-step="8">完成 OAuth</button>
+        <button class="step-retry-btn" data-step="8" style="display:none;" title="重试此步骤">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+          </svg>
+        </button>
+        <span class="step-status" data-step="8"></span>
+      </div>
+      <div class="step-row" data-step="9">
+        <div class="step-indicator" data-step="9"><span class="step-num">9</span></div>
+        <button class="step-btn" data-step="9">CPA 接口验证</button>
+        <button class="step-retry-btn" data-step="9" style="display:none;" title="重试此步骤">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+          </svg>
+        </button>
+        <span class="step-status" data-step="9"></span>
+      </div>
+    </div>
+  </section>
+
+  <section id="log-section">
+    <div class="log-header">
+      <span class="section-label">日志</span>
+      <button id="btn-clear-log" class="btn btn-ghost btn-xs" title="清空日志">清空</button>
+    </div>
+    <div id="log-area"></div>
+  </section>
+
+  <div id="toast-container"></div>
+  <script src="sidepanel.js"></script>
+</body>
+</html>
