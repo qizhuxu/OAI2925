@@ -374,6 +374,27 @@ async function fillVerificationCode(step, payload) {
         await sleep(100);
       }
       await sleepRandom(900, 1500);
+      
+      // Wait briefly to check for errors
+      await sleepRandom(1500, 2000);
+      
+      // Check for error messages
+      const bodyText = (document.body?.innerText || '').toLowerCase();
+      const hasCodeError = /invalid.*code|incorrect.*code|wrong.*code|code.*invalid|code.*incorrect|验证码.*错误|错误.*验证码|验证码.*无效|无效.*验证码|验证码.*不正确|不正确.*验证码/.test(bodyText);
+      
+      if (hasCodeError) {
+        log(`Step ${step}: Detected verification code error on page`, 'error');
+        throw new Error('CODE_ERROR: 验证码错误，需要重新获取验证码');
+      }
+      
+      // Check if still on verification code page
+      const stillOnCodePage = document.querySelector('input[maxlength="1"], input[name="code"], input[name="otp"], input[inputmode="numeric"]');
+      if (stillOnCodePage) {
+        log(`Step ${step}: Still on verification code page after submit, code may be incorrect`, 'warn');
+        throw new Error('CODE_ERROR: 提交后仍在验证码页面，验证码可能错误');
+      }
+      
+      // Report complete AFTER error checks
       reportComplete(step);
       return;
     }
@@ -382,9 +403,6 @@ async function fillVerificationCode(step, payload) {
 
   fillInput(codeInput, code);
   log(`Step ${step}: Code filled`);
-
-  // Report complete BEFORE submit (page may navigate away)
-  reportComplete(step);
 
   // Submit
   await sleepRandom(450, 900);
@@ -395,6 +413,28 @@ async function fillVerificationCode(step, payload) {
     simulateClick(submitBtn);
     log(`Step ${step}: Verification submitted`);
   }
+  
+  // Wait briefly to check for errors
+  await sleepRandom(1500, 2000);
+  
+  // Check for error messages indicating incorrect code
+  const bodyText = (document.body?.innerText || '').toLowerCase();
+  const hasCodeError = /invalid.*code|incorrect.*code|wrong.*code|code.*invalid|code.*incorrect|验证码.*错误|错误.*验证码|验证码.*无效|无效.*验证码|验证码.*不正确|不正确.*验证码/.test(bodyText);
+  
+  if (hasCodeError) {
+    log(`Step ${step}: Detected verification code error on page`, 'error');
+    throw new Error('CODE_ERROR: 验证码错误，需要重新获取验证码');
+  }
+  
+  // Check if still on verification code page (code input still visible)
+  const stillOnCodePage = document.querySelector('input[name="code"], input[name="otp"], input[maxlength="1"], input[inputmode="numeric"]');
+  if (stillOnCodePage) {
+    log(`Step ${step}: Still on verification code page after submit, code may be incorrect`, 'warn');
+    throw new Error('CODE_ERROR: 提交后仍在验证码页面，验证码可能错误');
+  }
+  
+  // Report complete AFTER error checks (only if no errors detected)
+  reportComplete(step);
 }
 
 async function stepResendVerificationEmail(step) {

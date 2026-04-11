@@ -1392,6 +1392,104 @@ async function executeStepWithManualFallback(step, currentRun, totalRuns, minDel
       }
     }
     
+    // 特殊处理：Step 4 或 Step 7 验证码错误
+    if ((step === 4 || step === 7) && err.message.startsWith('CODE_ERROR:')) {
+      await addLog(`Step ${step}: 检测到验证码错误，将从邮件列表获取最新验证码并重试`, 'warn');
+      
+      // 设置最大重试次数
+      const maxRetries = 2;
+      for (let retry = 1; retry <= maxRetries; retry++) {
+        await addLog(`Step ${step} 验证码错误恢复: 第 ${retry}/${maxRetries} 次重试...`, 'info');
+        
+        try {
+          // 获取邮件配置
+          const state = await getState();
+          const mail = getMailConfig(state);
+          const recipientEmail = state.email || '';
+          
+          // 切换到邮件标签页
+          const mailTabId = await getTabId(mail.source);
+          if (!mailTabId) {
+            throw new Error('邮件标签页不存在，无法获取验证码');
+          }
+          
+          await chrome.tabs.update(mailTabId, { active: true });
+          await addLog(`Step ${step} 验证码错误恢复: 正在从邮件列表获取最新验证码...`, 'info');
+          
+          // 构建邮件轮询参数
+          const pollPayload = step === 4 ? {
+            filterAfterTimestamp: Date.now() - 300000, // 最近 5 分钟的邮件
+            senderFilters: ['openai', 'noreply', 'verify', 'auth'],
+            subjectFilters: ['verify', 'verification', 'code', '验证', 'confirm'],
+            recipientEmail: recipientEmail,
+            excludeCodes: [],  // 不排除任何验证码
+            maxAttempts: 3,
+            intervalMs: 3000,
+          } : {
+            filterAfterTimestamp: Date.now() - 300000, // 最近 5 分钟的邮件
+            strictChatGPTCodeOnly: true,
+            excludeCodes: state.signupVerificationCode ? [state.signupVerificationCode] : [],
+            senderFilters: ['openai', 'noreply', 'verify', 'auth', 'chatgpt'],
+            subjectFilters: ['your chatgpt code is'],
+            recipientEmail: recipientEmail,
+            maxAttempts: 3,
+            intervalMs: 3000,
+          };
+          
+          // 从邮件列表获取最新验证码
+          const result = await sendToContentScript(mail.source, {
+            type: 'POLL_EMAIL',
+            step: step,
+            source: 'background',
+            payload: pollPayload,
+          });
+          
+          if (!result || !result.code || result.error) {
+            throw new Error(`无法从邮件列表获取验证码: ${result?.error || '未找到验证码'}`);
+          }
+          
+          await addLog(`Step ${step} 验证码错误恢复: 获取到新验证码: ${result.code}`, 'ok');
+          
+          // 切换回验证码输入页面
+          const signupTabId = await getTabId('signup-page');
+          if (!signupTabId) {
+            throw new Error('验证码输入页面不存在');
+          }
+          
+          await chrome.tabs.update(signupTabId, { active: true });
+          await sleepRandom(500, 1000);
+          
+          // 填充新验证码
+          await sendToContentScript('signup-page', {
+            type: 'FILL_CODE',
+            step: step,
+            source: 'background',
+            payload: { code: result.code },
+          });
+          
+          await addLog(`Step ${step} 验证码错误恢复: 成功完成`, 'ok');
+          return; // 成功恢复，直接返回
+        } catch (retryErr) {
+          // 如果再次遇到 CODE_ERROR，继续下一次重试
+          if (retryErr.message.startsWith('CODE_ERROR:')) {
+            await addLog(`Step ${step} 验证码错误恢复: 第 ${retry} 次重试仍然遇到验证码错误`, 'warn');
+            if (retry === maxRetries) {
+              await addLog(`Step ${step} 验证码错误恢复: 已达到最大重试次数 (${maxRetries})，转为人工介入`, 'error');
+              await requestManualIntervention(step, `验证码错误 ${maxRetries} 次，请人工检查`, currentRun, totalRuns);
+              return;
+            }
+            // 继续下一次循环
+            continue;
+          } else {
+            // 其他错误，停止重试
+            await addLog(`Step ${step} 验证码错误恢复: 重试失败: ${retryErr.message}`, 'error');
+            await requestManualIntervention(step, `验证码错误恢复失败: ${retryErr.message}`, currentRun, totalRuns);
+            return;
+          }
+        }
+      }
+    }
+    
     // 特殊处理：Step 9 OAuth callback 超时
     if (step === 9 && /OAuth callback timeout/i.test(err.message)) {
       await addLog(`Step 9: 检测到 OAuth callback 超时，将刷新 OAuth 链接并重新执行 Step 6-9`, 'warn');
@@ -2162,17 +2260,19 @@ async function executeStep8(state) {
         cleanupListener();
         clearTimeout(timeout);
 
-        setState({ registrationFailed: true, failureReason: 'phone_verification_required' }).then(() => {
-          addLog(`Step 8: Registration failed - phone verification required (add-phone page detected)`, 'warn');
-          addLog(`Step 8: Skipping Step 9, will restart registration flow...`, 'info');
-          setStepStatus(8, 'completed');
+        // 使用 async IIFE 来正确处理 await
+        (async () => {
+          await setState({ registrationFailed: true, failureReason: 'phone_verification_required' });
+          await addLog(`Step 8: Registration failed - phone verification required (add-phone page detected)`, 'warn');
+          await addLog(`Step 8: Skipping Step 9, will restart registration flow...`, 'info');
+          await setStepStatus(8, 'completed');
           notifyStepComplete(8, { skipStep9: true, reason: 'phone_verification_required' });
           chrome.runtime.sendMessage({
             type: 'DATA_UPDATED',
             payload: { registrationFailed: true, failureReason: 'phone_verification_required' },
           }).catch(() => {});
-          resolve();
-        });
+          resolve({ skipStep9: true, reason: 'phone_verification_required' });
+        })();
         return;
       }
       
@@ -2236,11 +2336,17 @@ async function executeStep8(state) {
               await addLog(`Step 8: 检测到当前页面已是 add-phone，停止点击尝试`, 'warn');
               resolved = true;
               cleanupListener();
+              clearTimeout(timeout);  // 清理 timeout
               await setState({ registrationFailed: true, failureReason: 'phone_verification_required' });
               await addLog(`Step 8: Registration failed - phone verification required (add-phone page detected)`, 'warn');
               await addLog(`Step 8: Skipping Step 9, will restart registration flow...`, 'info');
-              await setStepStatus(8, 'completed');
-              resolve({ addPhoneDetected: true });
+              await setStepStatus(8, 'completed');  // 添加 await
+              notifyStepComplete(8, { skipStep9: true, reason: 'phone_verification_required' });
+              chrome.runtime.sendMessage({
+                type: 'DATA_UPDATED',
+                payload: { registrationFailed: true, failureReason: 'phone_verification_required' },
+              }).catch(() => {});
+              resolve({ skipStep9: true, reason: 'phone_verification_required' });
               return;
             }
           } catch (tabErr) {
@@ -2727,8 +2833,12 @@ async function saveAuthFileToLocal(authData, email) {
   
   const filename = `codex-${email}-free.json`;
   
+  // 获取当前模式
+  const state = await getState();
+  const mode = state.localMode ? 'local' : 'cpa';
+  
   try {
-    await addLog(`Step 9: 准备保存认证文件: ${filename}`);
+    await addLog(`Step 9: 准备保存认证文件: ${filename} (${mode} 模式)`);
     
     // 将 JSON 转换为字符串
     const jsonContent = JSON.stringify(authData, null, 2);
@@ -2740,6 +2850,7 @@ async function saveAuthFileToLocal(authData, email) {
         content: jsonContent,
         filename: filename,
         dateFolder: dateFolder,
+        mode: mode,  // 添加模式参数
       }
     });
     

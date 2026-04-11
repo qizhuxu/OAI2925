@@ -49,6 +49,154 @@ const selectRunMode = document.getElementById('select-run-mode');
 let selectedFolderHandle = null;
 
 // ============================================================
+// IndexedDB 持久化文件夹句柄
+// ============================================================
+
+const DB_NAME = 'OAI2925_Config';
+const DB_VERSION = 1;
+const STORE_NAME = 'settings';
+
+async function openDB() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result);
+    
+    request.onupgradeneeded = (event) => {
+      const db = event.target.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME);
+      }
+    };
+  });
+}
+
+async function saveFolderHandle(handle) {
+  try {
+    console.log('[IndexedDB] Attempting to save folder handle...');
+    const db = await openDB();
+    console.log('[IndexedDB] Database opened');
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const store = tx.objectStore(STORE_NAME);
+    
+    await new Promise((resolve, reject) => {
+      const request = store.put(handle, 'folderHandle');
+      request.onsuccess = () => {
+        console.log('[IndexedDB] Folder handle saved successfully');
+        resolve();
+      };
+      request.onerror = () => {
+        console.error('[IndexedDB] Save error:', request.error);
+        reject(request.error);
+      };
+    });
+    
+    // 验证保存是否成功
+    const verifyTx = db.transaction(STORE_NAME, 'readonly');
+    const verifyStore = verifyTx.objectStore(STORE_NAME);
+    const verifyRequest = verifyStore.get('folderHandle');
+    verifyRequest.onsuccess = () => {
+      if (verifyRequest.result) {
+        console.log('[IndexedDB] Verification: Folder handle exists in DB');
+      } else {
+        console.error('[IndexedDB] Verification: Folder handle NOT found in DB');
+      }
+    };
+  } catch (err) {
+    console.error('[IndexedDB] Failed to save folder handle:', err);
+    throw err;
+  }
+}
+
+async function loadFolderHandle() {
+  try {
+    console.log('[IndexedDB] Attempting to load folder handle...');
+    const db = await openDB();
+    console.log('[IndexedDB] Database opened');
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const store = tx.objectStore(STORE_NAME);
+    
+    const handle = await new Promise((resolve, reject) => {
+      const request = store.get('folderHandle');
+      request.onsuccess = () => {
+        console.log('[IndexedDB] Get request succeeded, result:', request.result);
+        resolve(request.result);
+      };
+      request.onerror = () => {
+        console.error('[IndexedDB] Get request error:', request.error);
+        reject(request.error);
+      };
+    });
+    
+    if (!handle) {
+      console.log('[IndexedDB] No saved folder handle found');
+      return null;
+    }
+    
+    console.log('[IndexedDB] Folder handle found, checking permissions...');
+    console.log('[IndexedDB] Handle type:', handle.kind, 'Name:', handle.name);
+    
+    // 验证句柄是否仍然有效（只查询权限，不请求）
+    try {
+      const permission = await handle.queryPermission({ mode: 'readwrite' });
+      console.log('[IndexedDB] Current permission:', permission);
+      
+      if (permission === 'granted') {
+        console.log('[IndexedDB] Folder handle loaded and permission granted');
+        return handle;
+      }
+      
+      // 如果权限是 'prompt'，返回句柄但标记需要用户交互
+      if (permission === 'prompt') {
+        console.log('[IndexedDB] Permission is prompt, need user interaction');
+        return { handle, needsPermission: true };
+      }
+      
+      console.log('[IndexedDB] Folder handle permission denied');
+      return null;
+    } catch (permErr) {
+      console.error('[IndexedDB] Permission check failed:', permErr);
+      // 如果权限检查失败，可能是句柄已失效
+      return null;
+    }
+  } catch (err) {
+    console.error('[IndexedDB] Failed to load folder handle:', err);
+    return null;
+  }
+}
+
+async function requestFolderPermission(handle) {
+  try {
+    console.log('[IndexedDB] Requesting permission for folder handle...');
+    const permission = await handle.requestPermission({ mode: 'readwrite' });
+    console.log('[IndexedDB] Permission result:', permission);
+    return permission === 'granted';
+  } catch (err) {
+    console.error('[IndexedDB] Failed to request permission:', err);
+    return false;
+  }
+}
+
+async function clearFolderHandle() {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const store = tx.objectStore(STORE_NAME);
+    
+    await new Promise((resolve, reject) => {
+      const request = store.delete('folderHandle');
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+    
+    console.log('[IndexedDB] Folder handle cleared');
+  } catch (err) {
+    console.error('[IndexedDB] Failed to clear folder handle:', err);
+  }
+}
+
+// ============================================================
 // Toast Notifications
 // ============================================================
 
@@ -86,7 +234,9 @@ function dismissToast(toast) {
 
 async function restoreState() {
   try {
+    console.log('[Restore] Starting state restoration...');
     const state = await chrome.runtime.sendMessage({ type: 'GET_STATE', source: 'sidepanel' });
+    console.log('[Restore] State received:', state);
 
     if (state.oauthUrl) {
       displayOauthUrl.textContent = state.oauthUrl;
@@ -115,12 +265,103 @@ async function restoreState() {
       inputEmailPrefix.value = state.emailPrefix;
     }
     
-    // 恢复本地保存设置
-    if (state.saveToLocal) {
-      checkboxSaveLocal.checked = true;
-      
-      // 注意：selectedFolderHandle 无法跨会话保存，需要用户重新选择
+    // 尝试从 IndexedDB 恢复文件夹句柄
+    console.log('[Restore] Attempting to load folder handle from IndexedDB...');
+    const savedHandleResult = await loadFolderHandle();
+    console.log('[Restore] Load result:', savedHandleResult);
+    
+    if (savedHandleResult) {
+      // 检查是否需要用户交互来恢复权限
+      if (savedHandleResult.needsPermission) {
+        const handle = savedHandleResult.handle;
+        const folderName = handle.name;
+        console.log('[Restore] Folder handle found but needs permission:', folderName);
+        
+        // 显示"需要恢复权限"的提示
+        const pathText = `${folderName} (点击恢复)`;
+        const pathColor = '#f59e0b'; // 橙色提示
+        
+        selectedFolderPath.textContent = pathText;
+        selectedFolderPath.classList.add('selected');
+        selectedFolderPath.style.color = pathColor;
+        selectedFolderPath.style.cursor = 'pointer';
+        selectedFolderPath.title = '点击恢复文件夹访问权限';
+        
+        selectedFolderPathCpa.textContent = pathText;
+        selectedFolderPathCpa.classList.add('selected');
+        selectedFolderPathCpa.style.color = pathColor;
+        selectedFolderPathCpa.style.cursor = 'pointer';
+        selectedFolderPathCpa.title = '点击恢复文件夹访问权限';
+        
+        // 添加点击事件来恢复权限
+        const restorePermission = async () => {
+          try {
+            const granted = await requestFolderPermission(handle);
+            if (granted) {
+              selectedFolderHandle = handle;
+              
+              selectedFolderPath.textContent = `${folderName} (已恢复)`;
+              selectedFolderPath.style.color = '#10b981';
+              selectedFolderPath.style.cursor = '';
+              selectedFolderPath.title = '';
+              
+              selectedFolderPathCpa.textContent = `${folderName} (已恢复)`;
+              selectedFolderPathCpa.style.color = '#10b981';
+              selectedFolderPathCpa.style.cursor = '';
+              selectedFolderPathCpa.title = '';
+              
+              // 移除点击事件
+              selectedFolderPath.removeEventListener('click', restorePermission);
+              selectedFolderPathCpa.removeEventListener('click', restorePermission);
+              
+              // 更新保存的路径名称
+              await chrome.runtime.sendMessage({
+                type: 'SAVE_SETTING',
+                source: 'sidepanel',
+                payload: { localSavePath: folderName }
+              });
+              
+              showToast(`文件夹权限已恢复: ${folderName}`, 'success', 3000);
+            } else {
+              showToast('权限恢复失败，请重新选择文件夹', 'error');
+            }
+          } catch (err) {
+            console.error('[Restore] Failed to restore permission:', err);
+            showToast('权限恢复失败，请重新选择文件夹', 'error');
+          }
+        };
+        
+        selectedFolderPath.addEventListener('click', restorePermission);
+        selectedFolderPathCpa.addEventListener('click', restorePermission);
+        
+        showToast(`文件夹 ${folderName} 需要恢复权限，请点击路径`, 'info', 4000);
+      } else {
+        // 权限已授予，直接使用
+        selectedFolderHandle = savedHandleResult;
+        const folderName = savedHandleResult.name;
+        console.log('[Restore] Folder handle restored successfully:', folderName);
+        
+        selectedFolderPath.textContent = `${folderName} (已恢复)`;
+        selectedFolderPath.classList.add('selected');
+        selectedFolderPath.style.color = '#10b981'; // 绿色表示成功恢复
+        
+        selectedFolderPathCpa.textContent = `${folderName} (已恢复)`;
+        selectedFolderPathCpa.classList.add('selected');
+        selectedFolderPathCpa.style.color = '#10b981';
+        
+        // 更新保存的路径名称
+        await chrome.runtime.sendMessage({
+          type: 'SAVE_SETTING',
+          source: 'sidepanel',
+          payload: { localSavePath: folderName }
+        });
+        
+        showToast(`文件夹已自动恢复: ${folderName}`, 'success', 3000);
+      }
+    } else {
+      console.log('[Restore] No folder handle restored');
       if (state.localSavePath) {
+        // 如果无法恢复句柄，但有保存的路径，显示提示
         const pathText = `${state.localSavePath} (需重新选择)`;
         const pathColor = '#f59e0b'; // 橙色提示
         
@@ -131,7 +372,14 @@ async function restoreState() {
         selectedFolderPathCpa.textContent = pathText;
         selectedFolderPathCpa.classList.add('selected');
         selectedFolderPathCpa.style.color = pathColor;
+        
+        console.log('[Restore] Showing "need reselect" message for:', state.localSavePath);
       }
+    }
+    
+    // 恢复本地保存设置
+    if (state.saveToLocal) {
+      checkboxSaveLocal.checked = true;
       
       // 恢复 CPA 密钥（如果是 CPA 模式）
       if (!state.localMode && state.cpaManagementKey) {
@@ -688,10 +936,13 @@ btnSelectFolder.addEventListener('click', async () => {
     
     const folderName = selectedFolderHandle.name;
     
+    // 保存到 IndexedDB
+    await saveFolderHandle(selectedFolderHandle);
+    
     selectedFolderPath.textContent = `${folderName} (已选择)`;
     selectedFolderPath.classList.add('selected');
     selectedFolderPath.style.color = '';
-    selectedFolderPath.title = `已选择文件夹: ${folderName}\n\n注意：由于浏览器安全限制，无法显示完整路径。\n文件将保存到您选择的"${folderName}"文件夹中。`;
+    selectedFolderPath.title = `已选择文件夹: ${folderName}\n\n文件将保存到您选择的"${folderName}"文件夹中。\n下次打开插件会自动恢复此文件夹。`;
     
     await chrome.runtime.sendMessage({
       type: 'SAVE_SETTING',
@@ -720,6 +971,9 @@ btnSelectFolderCpa.addEventListener('click', async () => {
     
     const folderName = selectedFolderHandle.name;
     
+    // 保存到 IndexedDB
+    await saveFolderHandle(selectedFolderHandle);
+    
     // 同时更新两个路径显示
     selectedFolderPath.textContent = `${folderName} (已选择)`;
     selectedFolderPath.classList.add('selected');
@@ -728,7 +982,7 @@ btnSelectFolderCpa.addEventListener('click', async () => {
     selectedFolderPathCpa.textContent = `${folderName} (已选择)`;
     selectedFolderPathCpa.classList.add('selected');
     selectedFolderPathCpa.style.color = '';
-    selectedFolderPathCpa.title = `已选择文件夹: ${folderName}\n\n注意：由于浏览器安全限制，无法显示完整路径。\n文件将保存到您选择的"${folderName}"文件夹中。`;
+    selectedFolderPathCpa.title = `已选择文件夹: ${folderName}\n\n文件将保存到您选择的"${folderName}"文件夹中。\n下次打开插件会自动恢复此文件夹。`;
     
     await chrome.runtime.sendMessage({
       type: 'SAVE_SETTING',
@@ -759,30 +1013,36 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 async function handleSaveAuthFile(payload) {
-  const { content, filename, dateFolder } = payload;
+  const { content, filename, dateFolder, mode } = payload;
   
   if (!selectedFolderHandle) {
     throw new Error('未选择保存文件夹');
   }
   
   try {
+    // 创建日期文件夹
     const dateFolderHandle = await selectedFolderHandle.getDirectoryHandle(dateFolder, { create: true });
     
-    const fileHandle = await dateFolderHandle.getFileHandle(filename, { create: true });
+    // 创建模式子文件夹 (cpa 或 local)
+    const modeFolderHandle = await dateFolderHandle.getDirectoryHandle(mode, { create: true });
+    
+    // 在模式文件夹中保存认证文件
+    const fileHandle = await modeFolderHandle.getFileHandle(filename, { create: true });
     const writable = await fileHandle.createWritable();
     await writable.write(content);
     await writable.close();
     
-    showToast(`认证文件已保存: ${filename}`, 'success', 3000);
+    showToast(`认证文件已保存: ${mode}/${filename}`, 'success', 3000);
     
-    await saveAccountToCSV(dateFolderHandle);
+    // CSV 汇总文件保存在日期文件夹根目录
+    await saveAccountToCSV(dateFolderHandle, mode);
   } catch (err) {
     showToast(`保存文件失败: ${err.message}`, 'error');
     throw err;
   }
 }
 
-async function saveAccountToCSV(dateFolderHandle) {
+async function saveAccountToCSV(dateFolderHandle, mode) {
   try {
     const state = await chrome.runtime.sendMessage({ type: 'GET_STATE', source: 'sidepanel' });
     if (!state.email || !state.password) {
@@ -802,11 +1062,11 @@ async function saveAccountToCSV(dateFolderHandle) {
     }
     
     const timestamp = new Date().toISOString();
-    const newLine = `${state.email},${state.password},${timestamp}\n`;
+    const newLine = `${state.email},${state.password},${mode},${timestamp}\n`;
     
     let content = existingContent;
     if (!existingContent) {
-      content = 'Email,Password,Created At\n';
+      content = 'Email,Password,Mode,Created At\n';
     }
     content += newLine;
     
