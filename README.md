@@ -421,3 +421,11 @@ MIT License - 详见 [LICENSE](LICENSE) 文件
 ---
 
 **注意**：本工具不隶属于 OpenAI 或 2925.com，仅为个人开发的自动化工具。
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=qizhuxu/OAI2925&type=Date)](https://star-history.com/#qizhuxu/OAI2925&Date)
+
+---
+
+如果这个项目对你有帮助，请给个 ⭐ Star 支持一下！
