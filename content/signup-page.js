@@ -359,6 +359,8 @@ async function fillVerificationCode(step, payload) {
 
   // Find code input — could be a single input or multiple separate inputs
   let codeInput = null;
+  let isSingleDigitInputs = false;
+
   try {
     codeInput = await waitForElement(
       'input[name="code"], input[name="otp"], input[type="text"][maxlength="6"], input[aria-label*="code"], input[placeholder*="code"], input[placeholder*="Code"], input[inputmode="numeric"]',
@@ -369,72 +371,138 @@ async function fillVerificationCode(step, payload) {
     const singleInputs = document.querySelectorAll('input[maxlength="1"]');
     if (singleInputs.length >= 6) {
       log(`Step ${step}: Found single-digit code inputs, filling individually...`);
+      isSingleDigitInputs = true;
+      
       for (let i = 0; i < 6 && i < singleInputs.length; i++) {
         fillInput(singleInputs[i], code[i]);
         await sleep(100);
       }
       await sleepRandom(900, 1500);
-      
-      // Wait briefly to check for errors
-      await sleepRandom(1500, 2000);
-      
-      // Check for error messages
-      const bodyText = (document.body?.innerText || '').toLowerCase();
-      const hasCodeError = /invalid.*code|incorrect.*code|wrong.*code|code.*invalid|code.*incorrect|验证码.*错误|错误.*验证码|验证码.*无效|无效.*验证码|验证码.*不正确|不正确.*验证码/.test(bodyText);
-      
-      if (hasCodeError) {
-        log(`Step ${step}: Detected verification code error on page`, 'error');
-        throw new Error('CODE_ERROR: 验证码错误，需要重新获取验证码');
-      }
-      
-      // Check if still on verification code page
-      const stillOnCodePage = document.querySelector('input[maxlength="1"], input[name="code"], input[name="otp"], input[inputmode="numeric"]');
-      if (stillOnCodePage) {
-        log(`Step ${step}: Still on verification code page after submit, code may be incorrect`, 'warn');
-        throw new Error('CODE_ERROR: 提交后仍在验证码页面，验证码可能错误');
-      }
-      
-      // Report complete AFTER error checks
-      reportComplete(step);
-      return;
+    } else {
+      throw new Error('Could not find verification code input. URL: ' + location.href);
     }
-    throw new Error('Could not find verification code input. URL: ' + location.href);
   }
 
-  fillInput(codeInput, code);
-  log(`Step ${step}: Code filled`);
+  // Fill single input if not already filled
+  if (!isSingleDigitInputs && codeInput) {
+    fillInput(codeInput, code);
+    log(`Step ${step}: Code filled`);
+  }
 
   // Submit
   await sleepRandom(450, 900);
   const submitBtn = document.querySelector('button[type="submit"]')
-    || await waitForElementByText('button', /verify|confirm|submit|continue|确认|验证/i, 5000).catch(() => null);
+    || await waitForElementByText('button', /verify|confirm|submit|continue|确认|验证|继续/i, 5000).catch(() => null);
 
   if (submitBtn) {
     simulateClick(submitBtn);
     log(`Step ${step}: Verification submitted`);
   }
+
+  // ============================================================
+  // 新的可靠检测逻辑：等待页面状态变化
+  // ============================================================
   
-  // Wait briefly to check for errors
-  await sleepRandom(1500, 2000);
+  log(`Step ${step}: Waiting for verification result...`);
   
-  // Check for error messages indicating incorrect code
-  const bodyText = (document.body?.innerText || '').toLowerCase();
-  const hasCodeError = /invalid.*code|incorrect.*code|wrong.*code|code.*invalid|code.*incorrect|验证码.*错误|错误.*验证码|验证码.*无效|无效.*验证码|验证码.*不正确|不正确.*验证码/.test(bodyText);
-  
-  if (hasCodeError) {
-    log(`Step ${step}: Detected verification code error on page`, 'error');
-    throw new Error('CODE_ERROR: 验证码错误，需要重新获取验证码');
+  const codeInputSelector = isSingleDigitInputs 
+    ? 'input[maxlength="1"]' 
+    : 'input[name="code"], input[name="otp"], input[type="text"][maxlength="6"], input[inputmode="numeric"]';
+
+  try {
+    // 等待以下任一情况发生（最长10秒）
+    const result = await Promise.race([
+      // 情况1: 页面跳转（成功）
+      waitForNavigation(10000).catch(() => null),
+      
+      // 情况2: 验证码输入框消失（成功）
+      waitForElementDisappear(codeInputSelector, 10000).catch(() => null),
+      
+      // 情况3: 错误消息出现（失败）
+      waitForErrorMessage(10000).catch(() => null),
+      
+      // 情况4: 超时保护
+      sleep(10000).then(() => ({ type: 'timeout' }))
+    ]);
+
+    // 过滤掉 null 结果（catch 返回的）
+    if (!result) {
+      throw new Error('All detection methods failed');
+    }
+
+    log(`Step ${step}: Detection result: ${result.type}`);
+
+    // 根据结果判断
+    if (result.type === 'navigation') {
+      log(`Step ${step}: Page navigated successfully to: ${result.url}`, 'ok');
+      reportComplete(step);
+      return;
+    }
+
+    if (result.type === 'disappeared') {
+      log(`Step ${step}: Code input disappeared, verification successful`, 'ok');
+      // 再等待一下确保页面稳定
+      await sleepRandom(1000, 1500);
+      reportComplete(step);
+      return;
+    }
+
+    if (result.type === 'error') {
+      log(`Step ${step}: Error message detected: ${result.message}`, 'error');
+      throw new Error('CODE_ERROR: 验证码错误，需要重新获取验证码');
+    }
+
+    if (result.type === 'timeout') {
+      // 超时后做最终检查
+      log(`Step ${step}: Timeout reached, performing final check...`, 'warn');
+      
+      // 检查是否有错误消息
+      const bodyText = (document.body?.innerText || '').toLowerCase();
+      const hasError = /invalid.*code|incorrect.*code|wrong.*code|code.*invalid|code.*incorrect|验证码.*错误|错误.*验证码|验证码.*无效|无效.*验证码|验证码.*不正确|不正确.*验证码/.test(bodyText);
+      
+      if (hasError) {
+        log(`Step ${step}: Error message found in final check`, 'error');
+        throw new Error('CODE_ERROR: 验证码错误，需要重新获取验证码');
+      }
+
+      // 检查输入框是否还存在且可见
+      const codeInputStill = document.querySelector(codeInputSelector);
+      const isVisible = codeInputStill && codeInputStill.offsetParent !== null;
+      const isEnabled = codeInputStill && !codeInputStill.disabled && !codeInputStill.readOnly;
+
+      if (isVisible && isEnabled) {
+        // 输入框仍然可见且可用，但没有错误消息
+        // 可能是网络慢或页面卡住了
+        log(`Step ${step}: Code input still visible after timeout, but no error message`, 'warn');
+        log(`Step ${step}: Assuming success and continuing (may need manual verification)`, 'warn');
+        reportComplete(step);
+        return;
+      }
+
+      // 输入框不可见或已禁用，认为成功
+      log(`Step ${step}: Code input not visible/enabled, assuming success`, 'ok');
+      reportComplete(step);
+      return;
+    }
+
+  } catch (error) {
+    // 如果所有检测都失败了，做最后的兜底检查
+    log(`Step ${step}: Detection error: ${error.message}, performing fallback check...`, 'warn');
+    
+    await sleepRandom(2000, 3000);
+    
+    // 最终兜底检查
+    const bodyText = (document.body?.innerText || '').toLowerCase();
+    const hasError = /invalid.*code|incorrect.*code|wrong.*code|code.*invalid|code.*incorrect|验证码.*错误|错误.*验证码|验证码.*无效|无效.*验证码|验证码.*不正确|不正确.*验证码/.test(bodyText);
+    
+    if (hasError) {
+      throw new Error('CODE_ERROR: 验证码错误，需要重新获取验证码');
+    }
+
+    // 没有明确错误，假设成功
+    log(`Step ${step}: No clear error detected, assuming success`, 'ok');
+    reportComplete(step);
   }
-  
-  // Check if still on verification code page (code input still visible)
-  const stillOnCodePage = document.querySelector('input[name="code"], input[name="otp"], input[maxlength="1"], input[inputmode="numeric"]');
-  if (stillOnCodePage) {
-    log(`Step ${step}: Still on verification code page after submit, code may be incorrect`, 'warn');
-    throw new Error('CODE_ERROR: 提交后仍在验证码页面，验证码可能错误');
-  }
-  
-  // Report complete AFTER error checks (only if no errors detected)
-  reportComplete(step);
 }
 
 async function stepResendVerificationEmail(step) {

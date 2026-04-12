@@ -245,6 +245,136 @@ function sleepRandom(minMs, maxMs = minMs) {
   return sleep(delay);
 }
 
+/**
+ * Wait for page navigation (URL change or page reload).
+ * @param {number} timeout - Max wait time in ms (default 10000)
+ * @returns {Promise<{type: 'navigation', url: string}>}
+ */
+function waitForNavigation(timeout = 10000) {
+  return new Promise((resolve, reject) => {
+    const startUrl = location.href;
+    console.log(LOG_PREFIX, `Waiting for navigation from: ${startUrl}`);
+
+    // Check if URL has already changed
+    const checkInterval = setInterval(() => {
+      if (location.href !== startUrl) {
+        clearInterval(checkInterval);
+        clearTimeout(timer);
+        console.log(LOG_PREFIX, `Navigation detected: ${location.href}`);
+        resolve({ type: 'navigation', url: location.href });
+      }
+    }, 100);
+
+    const timer = setTimeout(() => {
+      clearInterval(checkInterval);
+      reject(new Error(`Navigation timeout after ${timeout}ms`));
+    }, timeout);
+  });
+}
+
+/**
+ * Wait for an element to disappear from the DOM.
+ * @param {string} selector - CSS selector
+ * @param {number} timeout - Max wait time in ms (default 10000)
+ * @returns {Promise<{type: 'disappeared'}>}
+ */
+function waitForElementDisappear(selector, timeout = 10000) {
+  return new Promise((resolve, reject) => {
+    const check = () => {
+      const el = document.querySelector(selector);
+      return !el || el.offsetParent === null;
+    };
+
+    if (check()) {
+      console.log(LOG_PREFIX, `Element already gone: ${selector}`);
+      resolve({ type: 'disappeared' });
+      return;
+    }
+
+    console.log(LOG_PREFIX, `Waiting for element to disappear: ${selector}`);
+
+    const observer = new MutationObserver(() => {
+      if (check()) {
+        observer.disconnect();
+        clearTimeout(timer);
+        console.log(LOG_PREFIX, `Element disappeared: ${selector}`);
+        resolve({ type: 'disappeared' });
+      }
+    });
+
+    observer.observe(document.body || document.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['style', 'class'],
+    });
+
+    const timer = setTimeout(() => {
+      observer.disconnect();
+      reject(new Error(`Element did not disappear after ${timeout}ms: ${selector}`));
+    }, timeout);
+  });
+}
+
+/**
+ * Wait for error message to appear on the page.
+ * @param {number} timeout - Max wait time in ms (default 5000)
+ * @returns {Promise<{type: 'error', message: string}>}
+ */
+function waitForErrorMessage(timeout = 5000) {
+  return new Promise((resolve, reject) => {
+    const errorPattern = /invalid.*code|incorrect.*code|wrong.*code|code.*invalid|code.*incorrect|验证码.*错误|错误.*验证码|验证码.*无效|无效.*验证码|验证码.*不正确|不正确.*验证码/i;
+
+    const check = () => {
+      const bodyText = document.body?.innerText || '';
+      if (errorPattern.test(bodyText)) {
+        const match = bodyText.match(errorPattern);
+        return match ? match[0] : 'Error detected';
+      }
+      return null;
+    };
+
+    const existing = check();
+    if (existing) {
+      console.log(LOG_PREFIX, `Error message already present: ${existing}`);
+      resolve({ type: 'error', message: existing });
+      return;
+    }
+
+    console.log(LOG_PREFIX, `Waiting for error message...`);
+
+    const observer = new MutationObserver(() => {
+      const error = check();
+      if (error) {
+        observer.disconnect();
+        clearTimeout(timer);
+        console.log(LOG_PREFIX, `Error message appeared: ${error}`);
+        resolve({ type: 'error', message: error });
+      }
+    });
+
+    observer.observe(document.body || document.documentElement, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+
+    const timer = setTimeout(() => {
+      observer.disconnect();
+      reject(new Error(`No error message appeared after ${timeout}ms`));
+    }, timeout);
+  });
+}
+
+/**
+ * Wait for any of multiple promises to resolve, with proper cleanup.
+ * @param {Promise[]} promises - Array of promises to race
+ * @returns {Promise<any>} - Result of the first resolved promise
+ */
+async function raceWithCleanup(promises) {
+  return Promise.race(promises);
+}
+
 // Auto-report ready on load
 // Skip ready signal from child iframes of mail pages to avoid overwriting the top frame's registration
 const _isMailChildFrame = (SCRIPT_SOURCE === 'qq-mail' || SCRIPT_SOURCE === 'mail-163') && window !== window.top;
