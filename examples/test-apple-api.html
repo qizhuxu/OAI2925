@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>小苹果 API 测试</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 50px auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .container {
+      background: white;
+      padding: 30px;
+      border-radius: 10px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    h1 {
+      color: #333;
+      margin-bottom: 30px;
+    }
+    .form-group {
+      margin-bottom: 20px;
+    }
+    label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: bold;
+      color: #555;
+    }
+    input, select {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+      font-size: 14px;
+    }
+    button {
+      background: #4CAF50;
+      color: white;
+      padding: 12px 30px;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 16px;
+      margin-right: 10px;
+    }
+    button:hover {
+      background: #45a049;
+    }
+    button.secondary {
+      background: #2196F3;
+    }
+    button.secondary:hover {
+      background: #0b7dda;
+    }
+    button.danger {
+      background: #f44336;
+    }
+    button.danger:hover {
+      background: #da190b;
+    }
+    .result {
+      margin-top: 30px;
+      padding: 20px;
+      background: #f9f9f9;
+      border-radius: 5px;
+      border-left: 4px solid #4CAF50;
+    }
+    .result h3 {
+      margin-top: 0;
+      color: #333;
+    }
+    pre {
+      background: #2d2d2d;
+      color: #f8f8f2;
+      padding: 15px;
+      border-radius: 5px;
+      overflow-x: auto;
+      font-size: 13px;
+    }
+    .error {
+      border-left-color: #f44336;
+      background: #ffebee;
+    }
+    .code-highlight {
+      background: #fff3cd;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: monospace;
+      font-weight: bold;
+      color: #856404;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🍎 小苹果取件 API 测试</h1>
+    
+    <div class="form-group">
+      <label>邮箱地址</label>
+      <input type="email" id="email" placeholder="example@hotmail.com" value="OphiraJada9560@hotmail.com">
+    </div>
+    
+    <div class="form-group">
+      <label>Client ID</label>
+      <input type="text" id="clientId" placeholder="9e5f94bc-e8a4-4e73-b8be-63364c29d753" value="9e5f94bc-e8a4-4e73-b8be-63364c29d753">
+    </div>
+    
+    <div class="form-group">
+      <label>Refresh Token</label>
+      <input type="text" id="refreshToken" placeholder="M.C537_BAY.0.U.-..." value="M.C537_BAY.0.U.-CoqaiIScf81pZz4fS*UpwwmQN9KjoSXmDN7dY1Em5Wfrn5S12d!ncTXvxFXQTPNhGWMzoUbRD*Ru4JA3BbNs72rtZRmGqKb5sp1DSwIkCqMAxS740Q8U1gu81i4ulhD5v9HAvp28UIGceEtzQyynFBZNi!qclnWswLAtIP4XOfIk0mG!fEaPwpRSORjVVuD6ONM2YnVElbmd8a5s6eNZDaf8yBBdL5Nr96f2fFu18QiGq8mcDUGCs8NAAhPQoJK161dVRgOpXqck!JB08wMP6naIvpIKbLaqe0GOd7sPimdAFYb9xLBHXlkb2tr2I5i5cGOJ9EVcPtIcdP!DDnuTHselTKomw3L*1hQjuYrs6QeqkwS4eUhKUoJSIBtyAId0ltxJ0cD2wJB8yV3ogcn2Fzc$">
+    </div>
+    
+    <div class="form-group">
+      <label>邮箱文件夹</label>
+      <select id="mailbox">
+        <option value="INBOX">收件箱 (INBOX)</option>
+        <option value="Junk">垃圾箱 (Junk)</option>
+      </select>
+    </div>
+    
+    <div>
+      <button onclick="getLatestMail()">获取最新邮件</button>
+      <button onclick="getAllMails()" class="secondary">获取全部邮件</button>
+      <button onclick="clearInbox()" class="danger">清空收件箱</button>
+      <button onclick="clearJunk()" class="danger">清空垃圾箱</button>
+    </div>
+    
+    <div id="result"></div>
+  </div>
+
+  <script>
+    const API_BASE = 'https://apple.882263.xyz';
+
+    function getParams() {
+      return {
+        email: document.getElementById('email').value,
+        clientId: document.getElementById('clientId').value,
+        refreshToken: document.getElementById('refreshToken').value,
+        mailbox: document.getElementById('mailbox').value
+      };
+    }
+
+    function showResult(title, data, isError = false) {
+      const resultDiv = document.getElementById('result');
+      const errorClass = isError ? 'error' : '';
+      
+      // 尝试提取验证码
+      let codeHtml = '';
+      if (data && data.body) {
+        const code = extractCode(data.body);
+        if (code) {
+          codeHtml = `<p>✅ 验证码: <span class="code-highlight">${code}</span></p>`;
+        }
+      }
+      
+      resultDiv.innerHTML = `
+        <div class="result ${errorClass}">
+          <h3>${title}</h3>
+          ${codeHtml}
+          <pre>${JSON.stringify(data, null, 2)}</pre>
+        </div>
+      `;
+    }
+
+    function extractCode(text) {
+      if (!text) return null;
+      const match = text.match(/\b(\d{6})\b/);
+      return match ? match[1] : null;
+    }
+
+    async function getLatestMail() {
+      const params = getParams();
+      const url = new URL(`${API_BASE}/api/mail-new`);
+      url.searchParams.append('refresh_token', params.refreshToken);
+      url.searchParams.append('client_id', params.clientId);
+      url.searchParams.append('email', params.email);
+      url.searchParams.append('mailbox', params.mailbox);
+      url.searchParams.append('response_type', 'json');
+
+      try {
+        const response = await fetch(url);
+        const data = await response.json();
+        showResult('📬 最新邮件', data);
+      } catch (error) {
+        showResult('❌ 错误', { error: error.message }, true);
+      }
+    }
+
+    async function getAllMails() {
+      const params = getParams();
+      const url = new URL(`${API_BASE}/api/mail-all`);
+      url.searchParams.append('refresh_token', params.refreshToken);
+      url.searchParams.append('client_id', params.clientId);
+      url.searchParams.append('email', params.email);
+      url.searchParams.append('mailbox', params.mailbox);
+
+      try {
+        const response = await fetch(url);
+        const data = await response.json();
+        showResult(`📂 全部邮件 (${data.length} 封)`, data);
+      } catch (error) {
+        showResult('❌ 错误', { error: error.message }, true);
+      }
+    }
+
+    async function clearInbox() {
+      const params = getParams();
+      const url = new URL(`${API_BASE}/api/process-inbox`);
+      url.searchParams.append('refresh_token', params.refreshToken);
+      url.searchParams.append('client_id', params.clientId);
+      url.searchParams.append('email', params.email);
+
+      try {
+        const response = await fetch(url);
+        const data = await response.json();
+        showResult('🗑️ 清空收件箱', data);
+      } catch (error) {
+        showResult('❌ 错误', { error: error.message }, true);
+      }
+    }
+
+    async function clearJunk() {
+      const params = getParams();
+      const url = new URL(`${API_BASE}/api/process-junk`);
+      url.searchParams.append('refresh_token', params.refreshToken);
+      url.searchParams.append('client_id', params.clientId);
+      url.searchParams.append('email', params.email);
+
+      try {
+        const response = await fetch(url);
+        const data = await response.json();
+        showResult('🗑️ 清空垃圾箱', data);
+      } catch (error) {
+        showResult('❌ 错误', { error: error.message }, true);
+      }
+    }
+  </script>
+</body>
+</html>

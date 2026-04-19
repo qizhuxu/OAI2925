@@ -381,3 +381,19 @@ const _isMailChildFrame = (SCRIPT_SOURCE === 'qq-mail' || SCRIPT_SOURCE === 'mai
 if (!_isMailChildFrame) {
   reportReady();
 }
+
+// Report when content script is about to unload (page navigation)
+window.addEventListener('beforeunload', () => {
+  try {
+    chrome.runtime.sendMessage({
+      type: 'CONTENT_SCRIPT_UNLOADING',
+      source: SCRIPT_SOURCE,
+      step: null,
+      payload: {},
+      error: null,
+    });
+  } catch (e) {
+    // Ignore errors if background script is not available
+    console.log(LOG_PREFIX, 'Failed to send unload message:', e);
+  }
+});

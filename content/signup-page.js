@@ -98,6 +98,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 async function handleCommand(message) {
   switch (message.type) {
     case 'EXECUTE_STEP':
+      // ChatGPT 注册入口的特殊处理
+      if (message.payload?.signupEntry === 'chatgpt') {
+        switch (message.step) {
+          case 1: return await stepChatGPT1_clickSignup();
+          case 2: return await stepChatGPT2_fillEmail(message.payload);
+          case 3: return await stepChatGPT3_fillPassword(message.payload);
+          case 5: return await step5_fillNameBirthday(message.payload);
+          default: throw new Error(`ChatGPT signup does not handle step ${message.step}`);
+        }
+      }
+      
+      // OAuth 授权入口（原有逻辑）
       switch (message.step) {
         case 2: return await step2_clickRegister();
         case 3: return await step3_fillEmailPassword(message.payload);
@@ -353,19 +365,19 @@ async function fillVerificationCode(step, payload) {
   const { code } = payload;
   if (!code) throw new Error('No verification code provided.');
 
-  log(`Step ${step}: Waiting for verification code page to render...`);
-  await sleepRandom(1200, 2200);
-  log(`Step ${step}: Filling verification code: ${code}`);
+  log(`Step ${step}: Waiting for verification code input to appear...`);
 
-  // Find code input — could be a single input or multiple separate inputs
+  // 直接等待验证码输入框出现，不使用固定延迟
   let codeInput = null;
   let isSingleDigitInputs = false;
 
   try {
+    // 等待验证码输入框出现（增加超时时间）
     codeInput = await waitForElement(
       'input[name="code"], input[name="otp"], input[type="text"][maxlength="6"], input[aria-label*="code"], input[placeholder*="code"], input[placeholder*="Code"], input[inputmode="numeric"]',
-      10000
+      20000  // 增加到 20 秒
     );
+    log(`Step ${step}: Verification code input found`);
   } catch {
     // Check for multiple single-digit inputs (common pattern)
     const singleInputs = document.querySelectorAll('input[maxlength="1"]');
@@ -373,30 +385,44 @@ async function fillVerificationCode(step, payload) {
       log(`Step ${step}: Found single-digit code inputs, filling individually...`);
       isSingleDigitInputs = true;
       
+      // 确保第一个输入框可交互
+      await ensureElementInteractable(singleInputs[0]);
+      
       for (let i = 0; i < 6 && i < singleInputs.length; i++) {
         fillInput(singleInputs[i], code[i]);
         await sleep(100);
       }
       await sleepRandom(900, 1500);
     } else {
-      throw new Error('Could not find verification code input. URL: ' + location.href);
+      throw new Error(`Could not find verification code input after 20s. URL: ${location.href}`);
     }
   }
 
   // Fill single input if not already filled
   if (!isSingleDigitInputs && codeInput) {
+    await ensureElementInteractable(codeInput);
     fillInput(codeInput, code);
-    log(`Step ${step}: Code filled`);
+    log(`Step ${step}: Code filled: ${code}`);
   }
 
   // Submit
   await sleepRandom(450, 900);
-  const submitBtn = document.querySelector('button[type="submit"]')
-    || await waitForElementByText('button', /verify|confirm|submit|continue|确认|验证|继续/i, 5000).catch(() => null);
+  
+  // 等待提交按钮出现
+  let submitBtn = null;
+  try {
+    submitBtn = await waitForElement('button[type="submit"]', 5000).catch(() => null);
+    if (!submitBtn) {
+      submitBtn = await waitForElementByText('button', /verify|confirm|submit|continue|确认|验证|继续/i, 5000).catch(() => null);
+    }
+  } catch {}
 
   if (submitBtn) {
+    await ensureElementInteractable(submitBtn);
     simulateClick(submitBtn);
-    log(`Step ${step}: Verification submitted`);
+    log(`Step ${step}: Verification code submitted`);
+  } else {
+    log(`Step ${step}: No submit button found, code may auto-submit`, 'warn');
   }
 
   // ============================================================
@@ -410,19 +436,19 @@ async function fillVerificationCode(step, payload) {
     : 'input[name="code"], input[name="otp"], input[type="text"][maxlength="6"], input[inputmode="numeric"]';
 
   try {
-    // 等待以下任一情况发生（最长10秒）
+    // 等待以下任一情况发生（最长15秒，增加超时时间）
     const result = await Promise.race([
       // 情况1: 页面跳转（成功）
-      waitForNavigation(10000).catch(() => null),
+      waitForNavigation(15000).catch(() => null),
       
       // 情况2: 验证码输入框消失（成功）
-      waitForElementDisappear(codeInputSelector, 10000).catch(() => null),
+      waitForElementDisappear(codeInputSelector, 15000).catch(() => null),
       
       // 情况3: 错误消息出现（失败）
-      waitForErrorMessage(10000).catch(() => null),
+      waitForErrorMessage(15000).catch(() => null),
       
       // 情况4: 超时保护
-      sleep(10000).then(() => ({ type: 'timeout' }))
+      sleep(15000).then(() => ({ type: 'timeout' }))
     ]);
 
     // 过滤掉 null 结果（catch 返回的）
@@ -539,64 +565,127 @@ async function step6_login(payload) {
   const { email, password } = payload;
   if (!email) throw new Error('No email provided for login.');
 
-  log(`Step 6: Waiting for login page to render...`);
-  await sleepRandom(1800, 3200);
-  log(`Step 6: Logging in with ${email}...`);
+  log(`Step 6: Waiting for login page to load and email input to appear...`);
 
-  // Wait for email input on the auth page
+  // 直接等待邮箱输入框出现，不再使用固定延迟
+  // 这样可以适应不同的网络速度和页面加载情况
   let emailInput = null;
   try {
     emailInput = await waitForElement(
       'input[type="email"], input[name="email"], input[name="username"], input[id*="email"], input[placeholder*="email" i], input[placeholder*="Email"]',
-      15000
+      30000  // 增加超时时间到 30 秒，适应慢速网络
     );
-  } catch {
-    throw new Error('Could not find email input on login page. URL: ' + location.href);
+    log(`Step 6: Login page loaded, email input found`);
+  } catch (err) {
+    throw new Error(`Could not find email input on login page after 30s. URL: ${location.href}, Error: ${err.message}`);
   }
 
+  // 确保输入框可见且可交互
+  await ensureElementInteractable(emailInput);
+  
+  log(`Step 6: Logging in with ${email}...`);
   fillInput(emailInput, email);
   log('Step 6: Email filled');
 
   // Submit email
   await sleepRandom(450, 900);
-  const submitBtn1 = document.querySelector('button[type="submit"]')
-    || await waitForElementByText('button', /continue|next|submit|继续|下一步/i, 5000).catch(() => null);
+  
+  // 等待提交按钮出现并可点击
+  let submitBtn1 = null;
+  try {
+    submitBtn1 = await waitForElement('button[type="submit"]', 5000).catch(() => null);
+    if (!submitBtn1) {
+      submitBtn1 = await waitForElementByText('button', /continue|next|submit|继续|下一步/i, 5000).catch(() => null);
+    }
+  } catch {}
+  
   if (submitBtn1) {
+    await ensureElementInteractable(submitBtn1);
     simulateClick(submitBtn1);
-    log('Step 6: Submitted email');
+    log('Step 6: Submitted email, waiting for password field or OTP page...');
+  } else {
+    log('Step 6: No submit button found, trying to proceed anyway...', 'warn');
   }
 
   // Wait for password field to appear (with timeout)
-  const passwordInput = await waitForLoginPasswordField();
+  // 增加超时时间，因为可能需要等待页面跳转
+  const passwordInput = await waitForLoginPasswordField(35000);
+  
   if (passwordInput) {
     log('Step 6: Password field found, filling password...');
+    await ensureElementInteractable(passwordInput);
     fillInput(passwordInput, password);
 
     await sleepRandom(450, 900);
-    const submitBtn2 = document.querySelector('button[type="submit"]')
-      || await waitForElementByText('button', /continue|log\s*in|submit|sign\s*in|登录|继续/i, 5000).catch(() => null);
+    
+    // 等待登录按钮出现
+    let submitBtn2 = null;
+    try {
+      submitBtn2 = await waitForElement('button[type="submit"]', 5000).catch(() => null);
+      if (!submitBtn2) {
+        submitBtn2 = await waitForElementByText('button', /continue|log\s*in|submit|sign\s*in|登录|继续/i, 5000).catch(() => null);
+      }
+    } catch {}
 
     // Report complete BEFORE submit in case page navigates
     reportComplete(6, { needsOTP: true });
 
     if (submitBtn2) {
+      await ensureElementInteractable(submitBtn2);
       simulateClick(submitBtn2);
       log('Step 6: Submitted password, may need verification code (step 7)');
+    } else {
+      log('Step 6: No login button found, but password was filled', 'warn');
     }
     return;
   }
 
   // No password field — OTP flow
-  log('Step 6: No password field. OTP flow or auto-redirect.');
+  log('Step 6: No password field appeared after 35s. Assuming OTP flow or auto-redirect.');
   reportComplete(6, { needsOTP: true });
 }
 
-async function waitForLoginPasswordField(timeout = 25000) {
+// 确保元素可交互（可见且未被遮挡）
+async function ensureElementInteractable(element, maxWaitMs = 5000) {
+  const startTime = Date.now();
+  
+  while (Date.now() - startTime < maxWaitMs) {
+    if (isElementVisible(element) && !isElementObscured(element)) {
+      // 额外等待一小段时间确保动画完成
+      await sleep(200);
+      return true;
+    }
+    await sleep(100);
+  }
+  
+  log(`Warning: Element may not be fully interactable after ${maxWaitMs}ms`, 'warn');
+  return false;
+}
+
+// 检查元素是否被其他元素遮挡
+function isElementObscured(element) {
+  try {
+    const rect = element.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    const topElement = document.elementFromPoint(centerX, centerY);
+    
+    // 检查点击位置的元素是否是目标元素或其子元素
+    return topElement !== element && !element.contains(topElement);
+  } catch {
+    return false;
+  }
+}
+
+async function waitForLoginPasswordField(timeout = 35000) {
   const start = Date.now();
+  
+  log(`Step 6: Waiting for password field (timeout: ${timeout / 1000}s)...`);
 
   while (Date.now() - start < timeout) {
     const passwordInput = findVisiblePasswordInput();
     if (passwordInput) {
+      log(`Step 6: Password field found after ${Math.round((Date.now() - start) / 1000)}s`);
       return passwordInput;
     }
 
@@ -1233,5 +1322,239 @@ async function step5_fillNameBirthday(payload) {
     log('Step 5: Navigation confirmed, step complete');
   } else {
     throw new Error('Could not find "完成帐户创建" button');
+  }
+}
+
+
+// ============================================================
+// ChatGPT 注册入口流程
+// ============================================================
+
+/**
+ * ChatGPT Step 1: 点击 "免费注册" 按钮
+ */
+async function stepChatGPT1_clickSignup() {
+  log('ChatGPT Step 1: Waiting for chatgpt.com to load...');
+  await sleepRandom(1500, 2500);
+  log('ChatGPT Step 1: Looking for "免费注册" button...');
+
+  let signupBtn = null;
+  try {
+    // 查找 "免费注册" 按钮
+    signupBtn = await waitForElement(
+      'button[data-testid="signup-button"]',
+      10000
+    );
+  } catch {
+    // 备用方案：通过文本查找
+    try {
+      signupBtn = await waitForElementByText(
+        'button',
+        /免费注册|sign\s*up|create\s*account/i,
+        5000
+      );
+    } catch {
+      throw new Error(
+        'Could not find "免费注册" button on chatgpt.com. ' +
+        'URL: ' + location.href
+      );
+    }
+  }
+
+  reportComplete(1);
+  simulateClick(signupBtn);
+  log('ChatGPT Step 1: Clicked "免费注册" button');
+}
+
+/**
+ * ChatGPT Step 2: 填写邮箱地址并点击继续
+ */
+async function stepChatGPT2_fillEmail(payload) {
+  const { email } = payload;
+  if (!email) throw new Error('No email provided for ChatGPT signup.');
+
+  log('ChatGPT Step 2: Waiting for email input page...');
+  await sleepRandom(1500, 2500);
+  log(`ChatGPT Step 2: Filling email: ${email}`);
+
+  // 查找邮箱输入框
+  let emailInput = null;
+  try {
+    emailInput = await waitForElement(
+      'input#email[type="email"], input[name="email"][type="email"], input[placeholder*="电子邮件" i]',
+      10000
+    );
+  } catch {
+    throw new Error('Could not find email input on ChatGPT signup page. URL: ' + location.href);
+  }
+
+  fillInput(emailInput, email);
+  log('ChatGPT Step 2: Email filled');
+
+  // 点击 "继续" 按钮
+  await sleepRandom(450, 900);
+  let continueBtn = null;
+  try {
+    continueBtn = await waitForElement('button[type="submit"]', 5000);
+  } catch {
+    continueBtn = await waitForElementByText('button', /继续|continue/i, 5000);
+  }
+
+  if (!continueBtn) {
+    throw new Error('Could not find "继续" button on ChatGPT signup page.');
+  }
+
+  reportComplete(2, { email });
+  simulateClick(continueBtn);
+  log('ChatGPT Step 2: Clicked "继续" button, waiting for password page...');
+}
+
+/**
+ * ChatGPT Step 3: 填写密码
+ */
+async function stepChatGPT3_fillPassword(payload) {
+  const { password } = payload;
+  if (!password) throw new Error('No password provided for ChatGPT signup.');
+
+  log('ChatGPT Step 3: Waiting for password page...');
+  await sleepRandom(1500, 2500);
+  log('ChatGPT Step 3: Filling password...');
+
+  // 等待页面跳转到密码页面
+  // URL 可能是 https://auth.openai.com/create-account 或 https://auth.openai.com/create-account/password
+  const maxWait = 15000;
+  const startTime = Date.now();
+  
+  while (Date.now() - startTime < maxWait) {
+    const url = location.href;
+    if (url.includes('/create-account')) {
+      log('ChatGPT Step 3: Detected create-account page');
+      break;
+    }
+    await sleep(500);
+  }
+
+  // 查找密码输入框
+  let passwordInput = null;
+  try {
+    passwordInput = await waitForElement('input[type="password"]', 10000);
+  } catch {
+    throw new Error('Could not find password input on create-account page. URL: ' + location.href);
+  }
+
+  fillInput(passwordInput, password);
+  log('ChatGPT Step 3: Password filled');
+
+  // 提交表单
+  await sleepRandom(450, 900);
+  const submitBtn = document.querySelector('button[type="submit"]')
+    || await waitForElementByText('button', /continue|继续|创建账户|create/i, 5000).catch(() => null);
+
+  reportComplete(3);
+  
+  if (submitBtn) {
+    simulateClick(submitBtn);
+    log('ChatGPT Step 3: Form submitted, waiting for verification code page...');
+  }
+}
+
+/**
+ * 修改 Step 5: 填写姓名和生日，添加同意条款的勾选
+ */
+async function step5_fillNameBirthday(payload) {
+  const { firstName, lastName, year, month, day, signupEntry } = payload;
+  if (!firstName || !lastName) throw new Error('No name data provided.');
+
+  log('Step 5: Waiting for name/birthday page to render...');
+  await sleepRandom(1800, 3200);
+
+  const fullName = `${firstName} ${lastName}`;
+  log(`Step 5: Filling name: ${fullName}, Birthday: ${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`);
+
+  // --- Full Name (single field, not first+last) ---
+  let nameInput = null;
+  try {
+    nameInput = await waitForElement(
+      'input[name="name"], input[placeholder*="全名"], input[autocomplete="name"]',
+      10000
+    );
+  } catch {
+    throw new Error('Could not find name input. URL: ' + location.href);
+  }
+  fillInput(nameInput, fullName);
+  log(`Step 5: Name filled: ${fullName}`);
+
+  // --- Birthday/Age field ---
+  const ageInput = document.querySelector('input[name="age"], input[id*="age"]');
+  
+  if (ageInput) {
+    // Use age field instead of birthday
+    log('Step 5: Found age input field, calculating age from birthday...');
+    
+    const currentYear = new Date().getFullYear();
+    const age = currentYear - year;
+    
+    log(`Step 5: Setting age to ${age} (born in ${year})`);
+    
+    fillInput(ageInput, String(age));
+    log(`Step 5: Age set to ${age}`);
+  } else {
+    // Try birthday field with spinbuttons (old flow)
+    log('Step 5: Age field not found, trying birthday spinbuttons...');
+    
+    let yearSpinner = document.querySelector('[role="spinbutton"][data-type="year"]');
+    let monthSpinner = document.querySelector('[role="spinbutton"][data-type="month"]');
+    let daySpinner = document.querySelector('[role="spinbutton"][data-type="day"]');
+
+    if (!yearSpinner || !monthSpinner || !daySpinner) {
+      const allSpinners = document.querySelectorAll('[role="spinbutton"]');
+      if (allSpinners.length >= 3) {
+        yearSpinner = allSpinners[0];
+        monthSpinner = allSpinners[1];
+        daySpinner = allSpinners[2];
+      }
+    }
+
+    if (yearSpinner && monthSpinner && daySpinner) {
+      await setSpinButton(yearSpinner, year);
+      await setSpinButton(monthSpinner, month);
+      await setSpinButton(daySpinner, day);
+      log(`Step 5: Birthday set via spinbuttons`);
+    } else {
+      throw new Error('Could not find age or birthday input fields. URL: ' + location.href);
+    }
+  }
+
+  // ChatGPT 注册入口：需要勾选同意条款
+  if (signupEntry === 'chatgpt') {
+    log('Step 5: ChatGPT signup - looking for terms checkbox...');
+    
+    try {
+      // 查找 "我同意以下所有各项" 复选框
+      const checkbox = await waitForElement(
+        'input[id*="allCheckboxes"], input[type="checkbox"][name="allCheckboxes"]',
+        5000
+      );
+      
+      if (checkbox && !checkbox.checked) {
+        checkbox.click();
+        await sleep(200);
+        log('Step 5: Checked "我同意以下所有各项" checkbox');
+      }
+    } catch (err) {
+      log('Step 5: Could not find terms checkbox, continuing anyway...', 'warn');
+    }
+  }
+
+  // Submit
+  await sleepRandom(450, 900);
+  const submitBtn = document.querySelector('button[type="submit"]')
+    || await waitForElementByText('button', /continue|submit|继续|下一步/i, 5000).catch(() => null);
+
+  reportComplete(5);
+  
+  if (submitBtn) {
+    simulateClick(submitBtn);
+    log('Step 5: Form submitted');
   }
 }

@@ -1,5 +1,23 @@
 // sidepanel/sidepanel.js - Side Panel logic
 
+// ============================================================
+// Hotmail 管理器初始化
+// ============================================================
+let hotmailManager;
+let appleMailAPI;
+
+async function initHotmailManager() {
+  try {
+    hotmailManager = new HotmailManager();
+    await hotmailManager.init();
+    appleMailAPI = new AppleMailAPI();
+    await updateHotmailStats();
+    console.log('[Hotmail] Manager initialized successfully');
+  } catch (error) {
+    console.error('[Hotmail] Initialization failed:', error);
+  }
+}
+
 const STATUS_ICONS = {
   pending: '',
   running: '',
@@ -24,6 +42,9 @@ const btnClearLog = document.getElementById('btn-clear-log');
 const inputVpsUrl = document.getElementById('input-vps-url');
 const inputRunCount = document.getElementById('input-run-count');
 const inputEmailPrefix = document.getElementById('input-email-prefix');
+const inputDefaultPassword = document.getElementById('input-default-password');
+const btnToggleDefaultPassword = document.getElementById('btn-toggle-default-password');
+const btnSaveConfig = document.getElementById('btn-save-config');
 const displayGeneratedEmail = document.getElementById('display-generated-email');
 const displayGeneratedPassword = document.getElementById('display-generated-password');
 const btnStopFlow = document.getElementById('btn-stop-flow');
@@ -106,6 +127,56 @@ async function saveFolderHandle(handle) {
   } catch (err) {
     console.error('[IndexedDB] Failed to save folder handle:', err);
     throw err;
+  }
+}
+
+async function saveConfig(config) {
+  try {
+    console.log('[IndexedDB] Attempting to save config...');
+    const db = await openDB();
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const store = tx.objectStore(STORE_NAME);
+    
+    await new Promise((resolve, reject) => {
+      const request = store.put(config, 'userConfig');
+      request.onsuccess = () => {
+        console.log('[IndexedDB] Config saved successfully');
+        resolve();
+      };
+      request.onerror = () => {
+        console.error('[IndexedDB] Config save error:', request.error);
+        reject(request.error);
+      };
+    });
+  } catch (err) {
+    console.error('[IndexedDB] Failed to save config:', err);
+    throw err;
+  }
+}
+
+async function loadConfig() {
+  try {
+    console.log('[IndexedDB] Attempting to load config...');
+    const db = await openDB();
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const store = tx.objectStore(STORE_NAME);
+    
+    const config = await new Promise((resolve, reject) => {
+      const request = store.get('userConfig');
+      request.onsuccess = () => {
+        console.log('[IndexedDB] Config loaded:', request.result);
+        resolve(request.result);
+      };
+      request.onerror = () => {
+        console.error('[IndexedDB] Config load error:', request.error);
+        reject(request.error);
+      };
+    });
+    
+    return config || null;
+  } catch (err) {
+    console.error('[IndexedDB] Failed to load config:', err);
+    return null;
   }
 }
 
@@ -265,6 +336,161 @@ async function restoreState() {
       inputEmailPrefix.value = state.emailPrefix;
     }
     
+    // 从 IndexedDB 恢复用户配置
+    console.log('[Restore] Attempting to load user config from IndexedDB...');
+    const savedConfig = await loadConfig();
+    
+    // 如果有保存的配置，使用保存的配置；否则使用 background state 的配置
+    const finalConfig = savedConfig || {
+      runMode: state.localMode ? 'local' : 'cpa',
+      saveToLocal: state.saveToLocal || false,
+      incognitoMode: state.incognitoMode || false
+    };
+    
+    if (savedConfig) {
+      console.log('[Restore] User config loaded from IndexedDB:', savedConfig);
+      
+      // 恢复 CPA 接口（优先使用 IndexedDB，如果 background state 没有的话）
+      if (savedConfig.vpsUrl) {
+        inputVpsUrl.value = savedConfig.vpsUrl;
+        if (!state.vpsUrl) {
+          await chrome.runtime.sendMessage({
+            type: 'SAVE_SETTING',
+            source: 'sidepanel',
+            payload: { vpsUrl: savedConfig.vpsUrl }
+          });
+        }
+      }
+      
+      // 恢复邮箱前缀
+      if (savedConfig.emailPrefix) {
+        inputEmailPrefix.value = savedConfig.emailPrefix;
+        if (!state.emailPrefix) {
+          await chrome.runtime.sendMessage({
+            type: 'SAVE_SETTING',
+            source: 'sidepanel',
+            payload: { emailPrefix: savedConfig.emailPrefix }
+          });
+        }
+      }
+      
+      // 恢复默认密码
+      if (savedConfig.defaultPassword) {
+        inputDefaultPassword.value = savedConfig.defaultPassword;
+        await chrome.runtime.sendMessage({
+          type: 'SAVE_SETTING',
+          source: 'sidepanel',
+          payload: { defaultPassword: savedConfig.defaultPassword }
+        });
+      }
+      
+      // 恢复 CPA 密钥
+      if (savedConfig.cpaManagementKey) {
+        inputCpaKey.value = savedConfig.cpaManagementKey;
+        if (!state.cpaManagementKey) {
+          await chrome.runtime.sendMessage({
+            type: 'SAVE_SETTING',
+            source: 'sidepanel',
+            payload: { cpaManagementKey: savedConfig.cpaManagementKey }
+          });
+        }
+      }
+      
+      // 恢复注册入口
+      if (savedConfig.signupEntry) {
+        selectSignupEntry.value = savedConfig.signupEntry;
+        await chrome.runtime.sendMessage({
+          type: 'SAVE_SETTING',
+          source: 'sidepanel',
+          payload: { signupEntry: savedConfig.signupEntry }
+        });
+        console.log('[Restore] 注册入口已恢复:', savedConfig.signupEntry);
+      }
+      
+      // 恢复邮箱类型
+      if (savedConfig.emailType) {
+        selectEmailType.value = savedConfig.emailType;
+        await chrome.storage.local.set({ emailType: savedConfig.emailType });
+        // 触发 change 事件以更新 UI
+        selectEmailType.dispatchEvent(new Event('change'));
+        console.log('[Restore] 邮箱类型已恢复:', savedConfig.emailType);
+      }
+    } else {
+      console.log('[Restore] No saved config in IndexedDB, using background state');
+    }
+    
+    // 统一设置 UI（无论是否有保存的配置）
+    
+    // 1. 恢复无痕模式设置
+    const incognitoMode = finalConfig.incognitoMode;
+    checkboxIncognitoMode.checked = incognitoMode;
+    if (savedConfig && savedConfig.incognitoMode !== undefined) {
+      await chrome.runtime.sendMessage({
+        type: 'SAVE_SETTING',
+        source: 'sidepanel',
+        payload: { incognitoMode: incognitoMode }
+      });
+    }
+    console.log('[Restore] 无痕模式已恢复:', incognitoMode);
+    
+    // 2. 恢复运行模式（重要：必须在"保存到本地"之前）
+    const runMode = finalConfig.runMode;
+    selectRunMode.value = runMode;
+    const isLocalMode = runMode === 'local';
+    
+    // 设置 CPA 接口行的显示/隐藏
+    if (isLocalMode) {
+      inputVpsUrl.disabled = true;
+      cpaInterfaceRow.style.display = 'none';
+    } else {
+      inputVpsUrl.disabled = false;
+      cpaInterfaceRow.style.display = 'flex';
+    }
+    
+    if (savedConfig && savedConfig.runMode) {
+      await chrome.runtime.sendMessage({
+        type: 'SAVE_SETTING',
+        source: 'sidepanel',
+        payload: { localMode: isLocalMode }
+      });
+    }
+    console.log('[Restore] 运行模式已恢复:', runMode);
+    
+    // 3. 恢复"保存到本地"设置（依赖于运行模式）
+    const saveToLocal = finalConfig.saveToLocal;
+    checkboxSaveLocal.checked = saveToLocal;
+    
+    // 根据运行模式和"保存到本地"状态显示配置区域
+    if (saveToLocal) {
+      if (isLocalMode) {
+        // 本地模式：显示文件夹选择
+        localModeConfig.style.display = 'block';
+        cpaModeConfig.style.display = 'none';
+      } else {
+        // CPA 模式：显示 CPA 密钥输入
+        localModeConfig.style.display = 'none';
+        cpaModeConfig.style.display = 'block';
+      }
+    } else {
+      // 不保存到本地：隐藏所有配置
+      localModeConfig.style.display = 'none';
+      cpaModeConfig.style.display = 'none';
+    }
+    
+    if (savedConfig && savedConfig.saveToLocal !== undefined) {
+      await chrome.runtime.sendMessage({
+        type: 'SAVE_SETTING',
+        source: 'sidepanel',
+        payload: { saveToLocal: saveToLocal }
+      });
+    }
+    console.log('[Restore] 保存到本地已恢复:', saveToLocal, '| 运行模式:', runMode);
+    console.log('[Restore] UI 状态 - localModeConfig:', localModeConfig.style.display, '| cpaModeConfig:', cpaModeConfig.style.display);
+    
+    if (savedConfig) {
+      console.log('[Restore] User config restored successfully');
+    }
+    
     // 尝试从 IndexedDB 恢复文件夹句柄
     console.log('[Restore] Attempting to load folder handle from IndexedDB...');
     const savedHandleResult = await loadFolderHandle();
@@ -377,44 +603,9 @@ async function restoreState() {
       }
     }
     
-    // 恢复本地保存设置
-    if (state.saveToLocal) {
-      checkboxSaveLocal.checked = true;
-      
-      // 恢复 CPA 密钥（如果是 CPA 模式）
-      if (!state.localMode && state.cpaManagementKey) {
-        inputCpaKey.value = state.cpaManagementKey;
-      }
-    }
-    
-    // 恢复无痕模式设置
-    if (state.incognitoMode) {
-      checkboxIncognitoMode.checked = true;
-    }
-    
-    // 恢复运行模式设置
-    if (state.localMode) {
-      selectRunMode.value = 'local';
-      inputVpsUrl.disabled = true;
-      cpaInterfaceRow.style.display = 'none'; // 本地模式隐藏 CPA 接口
-      // 本地模式自动启用保存到本地
-      checkboxSaveLocal.checked = true;
-      localModeConfig.style.display = 'block';
-      cpaModeConfig.style.display = 'none';
-    } else {
-      // CPA 模式
-      selectRunMode.value = 'cpa';
-      cpaInterfaceRow.style.display = 'flex';
-      
-      // 根据"保存到本地"状态显示配置
-      if (state.saveToLocal) {
-        localModeConfig.style.display = 'none';
-        cpaModeConfig.style.display = 'block';
-      } else {
-        localModeConfig.style.display = 'none';
-        cpaModeConfig.style.display = 'none';
-      }
-    }
+    // 注意：saveToLocal、localMode、incognitoMode 等设置会在后面从 IndexedDB 恢复
+    // 这里只恢复 background state 中的值到变量，不设置 UI
+    // UI 会在 IndexedDB 恢复时统一设置
 
     if (state.stepStatuses) {
       for (const [step, status] of Object.entries(state.stepStatuses)) {
@@ -592,17 +783,32 @@ document.querySelectorAll('.step-btn').forEach(btn => {
     }
     
     if (step === 3) {
-      const emailPrefix = inputEmailPrefix.value.trim();
-      if (!emailPrefix) {
-        showToast('请先填写 2925 邮箱前缀', 'warn');
-        return;
-      }
-      const response = await chrome.runtime.sendMessage({ type: 'EXECUTE_STEP', source: 'sidepanel', payload: { step, emailPrefix } });
-      if (response && response.error) {
-        const errorMsg = response.error === 'Auto run in progress' ? '自动流程运行中，无法手动执行步骤' :
-                         response.error === 'Another step is executing' ? '另一个步骤正在执行中，请稍候' :
-                         response.error;
-        showToast(errorMsg, 'warn');
+      // 获取邮箱类型
+      const { emailType } = await chrome.storage.local.get('emailType');
+      
+      // 只有 2925 模式才需要检查邮箱前缀
+      if (emailType !== 'hotmail') {
+        const emailPrefix = inputEmailPrefix.value.trim();
+        if (!emailPrefix) {
+          showToast('请先填写 2925 邮箱前缀', 'warn');
+          return;
+        }
+        const response = await chrome.runtime.sendMessage({ type: 'EXECUTE_STEP', source: 'sidepanel', payload: { step, emailPrefix } });
+        if (response && response.error) {
+          const errorMsg = response.error === 'Auto run in progress' ? '自动流程运行中，无法手动执行步骤' :
+                           response.error === 'Another step is executing' ? '另一个步骤正在执行中，请稍候' :
+                           response.error;
+          showToast(errorMsg, 'warn');
+        }
+      } else {
+        // Hotmail 模式不需要邮箱前缀
+        const response = await chrome.runtime.sendMessage({ type: 'EXECUTE_STEP', source: 'sidepanel', payload: { step } });
+        if (response && response.error) {
+          const errorMsg = response.error === 'Auto run in progress' ? '自动流程运行中，无法手动执行步骤' :
+                           response.error === 'Another step is executing' ? '另一个步骤正在执行中，请稍候' :
+                           response.error;
+          showToast(errorMsg, 'warn');
+        }
       }
     } else {
       const response = await chrome.runtime.sendMessage({ type: 'EXECUTE_STEP', source: 'sidepanel', payload: { step } });
@@ -645,17 +851,32 @@ document.querySelectorAll('.step-retry-btn').forEach(btn => {
     }
     
     if (step === 3) {
-      const emailPrefix = inputEmailPrefix.value.trim();
-      if (!emailPrefix) {
-        showToast('请先填写 2925 邮箱前缀', 'warn');
-        return;
-      }
-      const response = await chrome.runtime.sendMessage({ type: 'EXECUTE_STEP', source: 'sidepanel', payload: { step, emailPrefix } });
-      if (response && response.error) {
-        const errorMsg = response.error === 'Auto run in progress' ? '自动流程运行中，无法手动重试步骤' :
-                         response.error === 'Another step is executing' ? '另一个步骤正在执行中，请稍候' :
-                         response.error;
-        showToast(errorMsg, 'warn');
+      // 获取邮箱类型
+      const { emailType } = await chrome.storage.local.get('emailType');
+      
+      // 只有 2925 模式才需要检查邮箱前缀
+      if (emailType !== 'hotmail') {
+        const emailPrefix = inputEmailPrefix.value.trim();
+        if (!emailPrefix) {
+          showToast('请先填写 2925 邮箱前缀', 'warn');
+          return;
+        }
+        const response = await chrome.runtime.sendMessage({ type: 'EXECUTE_STEP', source: 'sidepanel', payload: { step, emailPrefix } });
+        if (response && response.error) {
+          const errorMsg = response.error === 'Auto run in progress' ? '自动流程运行中，无法手动重试步骤' :
+                           response.error === 'Another step is executing' ? '另一个步骤正在执行中，请稍候' :
+                           response.error;
+          showToast(errorMsg, 'warn');
+        }
+      } else {
+        // Hotmail 模式不需要邮箱前缀
+        const response = await chrome.runtime.sendMessage({ type: 'EXECUTE_STEP', source: 'sidepanel', payload: { step } });
+        if (response && response.error) {
+          const errorMsg = response.error === 'Auto run in progress' ? '自动流程运行中，无法手动重试步骤' :
+                           response.error === 'Another step is executing' ? '另一个步骤正在执行中，请稍候' :
+                           response.error;
+          showToast(errorMsg, 'warn');
+        }
       }
     } else {
       const response = await chrome.runtime.sendMessage({ type: 'EXECUTE_STEP', source: 'sidepanel', payload: { step } });
@@ -673,15 +894,34 @@ document.querySelectorAll('.step-retry-btn').forEach(btn => {
 btnAutoRun.addEventListener('click', async () => {
   console.log('[btnAutoRun] 按钮被点击');
   
+  // 获取邮箱类型
+  const { emailType } = await chrome.storage.local.get('emailType');
+  
   const vpsUrl = inputVpsUrl.value.trim();
   const emailPrefix = inputEmailPrefix.value.trim();
   
+  console.log('[btnAutoRun] emailType:', emailType);
   console.log('[btnAutoRun] vpsUrl:', vpsUrl);
   console.log('[btnAutoRun] emailPrefix:', emailPrefix);
 
-  if (!emailPrefix) {
+  // 只有 2925 模式才需要检查邮箱前缀
+  if (emailType !== 'hotmail' && !emailPrefix) {
     showToast('请先填写 2925 邮箱前缀', 'warn');
     return;
+  }
+  
+  // Hotmail 模式检查是否有可用邮箱
+  if (emailType === 'hotmail') {
+    try {
+      const stats = await hotmailManager.getStats();
+      if (stats.available === 0) {
+        showToast('没有可用的 Hotmail 邮箱，请先导入邮箱', 'warn');
+        return;
+      }
+    } catch (error) {
+      showToast('检查邮箱状态失败，请重试', 'error');
+      return;
+    }
   }
   
   // 检查运行模式配置
@@ -749,8 +989,10 @@ btnAutoRun.addEventListener('click', async () => {
   btnAutoRun.disabled = true;
   inputRunCount.disabled = true;
   btnStopFlow.style.display = 'inline-flex';
+  btnStopFlow.disabled = false;  // 确保停止按钮可用
   btnAutoRun.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg> 运行中...';
   
+  console.log('[btnAutoRun] UI 已更新 - 停止按钮显示:', btnStopFlow.style.display);
   console.log('[btnAutoRun] 发送 AUTO_RUN 消息, totalRuns:', totalRuns);
   await chrome.runtime.sendMessage({ type: 'AUTO_RUN', source: 'sidepanel', payload: { totalRuns } });
   console.log('[btnAutoRun] AUTO_RUN 消息已发送');
@@ -802,6 +1044,80 @@ btnToggleVpsUrl.addEventListener('click', () => {
   } else {
     iconEye.style.display = 'block';
     iconEyeOff.style.display = 'none';
+  }
+});
+
+// Toggle Default Password visibility
+btnToggleDefaultPassword.addEventListener('click', () => {
+  const isPassword = inputDefaultPassword.type === 'password';
+  inputDefaultPassword.type = isPassword ? 'text' : 'password';
+  const iconEye = btnToggleDefaultPassword.querySelector('.icon-eye');
+  const iconEyeOff = btnToggleDefaultPassword.querySelector('.icon-eye-off');
+  if (isPassword) {
+    iconEye.style.display = 'none';
+    iconEyeOff.style.display = 'block';
+  } else {
+    iconEye.style.display = 'block';
+    iconEyeOff.style.display = 'none';
+  }
+});
+
+// Save Config Button
+btnSaveConfig.addEventListener('click', async () => {
+  try {
+    // 获取邮箱类型
+    const { emailType } = await chrome.storage.local.get('emailType');
+    
+    const config = {
+      vpsUrl: inputVpsUrl.value.trim(),
+      emailPrefix: inputEmailPrefix.value.trim(),
+      defaultPassword: inputDefaultPassword.value.trim(),
+      cpaManagementKey: inputCpaKey.value.trim(),
+      signupEntry: selectSignupEntry.value,
+      emailType: emailType || '2925',
+      runMode: selectRunMode.value,
+      saveToLocal: checkboxSaveLocal.checked,
+      incognitoMode: checkboxIncognitoMode.checked,
+      savedAt: new Date().toISOString()
+    };
+    
+    // 保存到 IndexedDB
+    await saveConfig(config);
+    
+    // 同时保存到 background state
+    await chrome.runtime.sendMessage({
+      type: 'SAVE_SETTING',
+      source: 'sidepanel',
+      payload: {
+        vpsUrl: config.vpsUrl,
+        emailPrefix: config.emailPrefix,
+        defaultPassword: config.defaultPassword,
+        cpaManagementKey: config.cpaManagementKey,
+        signupEntry: config.signupEntry,
+        localMode: config.runMode === 'local',
+        saveToLocal: config.saveToLocal,
+        incognitoMode: config.incognitoMode
+      }
+    });
+    
+    // 保存邮箱类型到 chrome.storage.local
+    await chrome.storage.local.set({ emailType: config.emailType });
+    
+    showToast('配置已保存', 'success', 2000);
+    console.log('[Config] Configuration saved:', {
+      vpsUrl: config.vpsUrl ? '***' : '(empty)',
+      emailPrefix: config.emailPrefix || '(empty)',
+      defaultPassword: config.defaultPassword ? '***' : '(empty)',
+      cpaManagementKey: config.cpaManagementKey ? '***' : '(empty)',
+      signupEntry: config.signupEntry,
+      emailType: config.emailType,
+      runMode: config.runMode,
+      saveToLocal: config.saveToLocal,
+      incognitoMode: config.incognitoMode
+    });
+  } catch (err) {
+    showToast('保存配置失败: ' + err.message, 'error');
+    console.error('[Config] Failed to save configuration:', err);
   }
 });
 
@@ -1227,6 +1543,10 @@ chrome.runtime.onMessage.addListener((message) => {
       document.querySelectorAll('.step-retry-btn').forEach(b => b.style.display = 'none');
       autoContinueBar.style.display = 'none';
       manualInterventionBar.style.display = 'none';
+      
+      // 重要：保持停止按钮显示状态（因为流程正在运行）
+      // btnStopFlow 的显示状态由 AUTO_RUN_STATUS 控制，这里不重置
+      
       updateProgressCounter();
       break;
     }
@@ -1258,6 +1578,8 @@ chrome.runtime.onMessage.addListener((message) => {
     case 'AUTO_RUN_STATUS': {
       const { phase, currentRun, totalRuns } = message.payload;
       const runLabel = totalRuns > 1 ? ` (${currentRun}/${totalRuns})` : '';
+      console.log('[AUTO_RUN_STATUS] phase:', phase, 'currentRun:', currentRun, 'totalRuns:', totalRuns);
+      
       switch (phase) {
         case 'waiting_email':
           autoContinueBar.style.display = 'flex';
@@ -1275,12 +1597,15 @@ chrome.runtime.onMessage.addListener((message) => {
           btnAutoRun.innerHTML = `人工介入${runLabel}`;
           break;
         case 'running':
+          console.log('[AUTO_RUN_STATUS] 设置运行中状态，显示停止按钮');
           autoContinueBar.style.display = 'none';
           manualInterventionBar.style.display = 'none';
           btnStopFlow.style.display = 'inline-flex';
+          btnStopFlow.disabled = false;
           btnResumeFlow.style.display = 'none';
           btnResumeFlow.disabled = false; // 重新启用继续按钮
           btnAutoRun.innerHTML = `运行中${runLabel}`;
+          console.log('[AUTO_RUN_STATUS] 停止按钮显示状态:', btnStopFlow.style.display);
           break;
         case 'paused':
           autoContinueBar.style.display = 'none';
@@ -1371,4 +1696,321 @@ btnTheme.addEventListener('click', () => {
 initTheme();
 restoreState().then(() => {
   updateButtonStates();
+});
+
+
+// ============================================================
+// Hotmail 邮箱管理功能
+// ============================================================
+
+// 邮箱类型选择器
+const selectEmailType = document.getElementById('select-email-type');
+const hotmailSection = document.getElementById('hotmail-section');
+const btnImportHotmail = document.getElementById('btn-import-hotmail');
+const btnViewHotmail = document.getElementById('btn-view-hotmail');
+const hotmailStats = document.getElementById('hotmail-stats');
+
+// 注册入口选择器
+const selectSignupEntry = document.getElementById('select-signup-entry');
+
+// 导入模态框
+const hotmailImportModal = document.getElementById('hotmail-import-modal');
+const btnCloseImportModal = document.getElementById('btn-close-import-modal');
+const btnCancelImport = document.getElementById('btn-cancel-import');
+const btnConfirmImport = document.getElementById('btn-confirm-import');
+const hotmailImportText = document.getElementById('hotmail-import-text');
+const hotmailImportFile = document.getElementById('hotmail-import-file');
+
+// 查看模态框
+const hotmailViewModal = document.getElementById('hotmail-view-modal');
+const btnCloseViewModal = document.getElementById('btn-close-view-modal');
+const btnCloseView = document.getElementById('btn-close-view');
+const hotmailList = document.getElementById('hotmail-list');
+const btnExportHotmail = document.getElementById('btn-export-hotmail');
+const btnClearHotmail = document.getElementById('btn-clear-hotmail');
+
+// 邮箱类型切换
+selectEmailType.addEventListener('change', async (e) => {
+  const emailType = e.target.value;
+  
+  if (emailType === 'hotmail') {
+    hotmailSection.style.display = 'block';
+    inputEmailPrefix.closest('.data-row').style.display = 'none';
+  } else {
+    hotmailSection.style.display = 'none';
+    inputEmailPrefix.closest('.data-row').style.display = 'block';
+  }
+  
+  await chrome.storage.local.set({ emailType });
+  console.log('[Hotmail] 切换到', emailType === 'hotmail' ? 'Hotmail' : '2925', '邮箱模式');
+});
+
+// 注册入口切换
+selectSignupEntry.addEventListener('change', async (e) => {
+  const signupEntry = e.target.value;
+  
+  await chrome.runtime.sendMessage({
+    type: 'SAVE_SETTING',
+    source: 'sidepanel',
+    payload: { signupEntry }
+  });
+  
+  console.log('[SignupEntry] 切换到', signupEntry === 'chatgpt' ? 'ChatGPT 注册' : 'OAuth 授权', '入口');
+  
+  if (signupEntry === 'chatgpt') {
+    showToast('已切换到 ChatGPT 注册入口', 'info', 2000);
+  } else {
+    showToast('已切换到 OAuth 授权入口（默认）', 'info', 2000);
+  }
+});
+
+// 导入标签页切换
+document.querySelectorAll('.import-tab').forEach(tab => {
+  tab.addEventListener('click', (e) => {
+    const tabName = e.target.dataset.tab;
+    
+    document.querySelectorAll('.import-tab').forEach(t => t.classList.remove('active'));
+    e.target.classList.add('active');
+    
+    document.getElementById('import-tab-text').style.display = tabName === 'text' ? 'block' : 'none';
+    document.getElementById('import-tab-file').style.display = tabName === 'file' ? 'block' : 'none';
+  });
+});
+
+// 打开导入模态框
+btnImportHotmail.addEventListener('click', () => {
+  hotmailImportModal.style.display = 'flex';
+});
+
+// 关闭导入模态框
+btnCloseImportModal.addEventListener('click', () => {
+  hotmailImportModal.style.display = 'none';
+});
+
+btnCancelImport.addEventListener('click', () => {
+  hotmailImportModal.style.display = 'none';
+});
+
+// 确认导入
+btnConfirmImport.addEventListener('click', async () => {
+  const activeTab = document.querySelector('.import-tab.active').dataset.tab;
+  
+  try {
+    let results;
+    
+    if (activeTab === 'text') {
+      const text = hotmailImportText.value;
+      if (!text.trim()) {
+        showToast('请输入邮箱信息', 'error');
+        return;
+      }
+      
+      const lines = text.split('\n').filter(line => line.trim() && !line.startsWith('#'));
+      results = await hotmailManager.importEmails(lines);
+    } else {
+      const file = hotmailImportFile.files[0];
+      
+      if (!file) {
+        showToast('请选择文件', 'error');
+        return;
+      }
+      
+      const text = await file.text();
+      
+      if (file.name.endsWith('.json')) {
+        const jsonData = JSON.parse(text);
+        results = await hotmailManager.importFromJSON(jsonData);
+      } else {
+        const lines = text.split('\n').filter(line => line.trim() && !line.startsWith('#'));
+        results = await hotmailManager.importEmails(lines);
+      }
+    }
+    
+    const message = `导入完成！\n✅ 成功: ${results.success.length}\n❌ 失败: ${results.failed.length}\n⏭️ 跳过: ${results.skipped.length}`;
+    
+    // 显示详细信息
+    if (results.skipped.length > 0) {
+      console.log('[Hotmail] 跳过的邮箱:', results.skipped);
+    }
+    if (results.failed.length > 0) {
+      console.log('[Hotmail] 失败的邮箱:', results.failed);
+    }
+    
+    showToast(message, results.success.length > 0 ? 'success' : 'info');
+    console.log('[Hotmail]', message.replace(/\n/g, ' | '));
+    
+    await updateHotmailStats();
+    
+    hotmailImportModal.style.display = 'none';
+    hotmailImportText.value = '';
+    hotmailImportFile.value = '';
+    
+  } catch (error) {
+    showToast(`导入失败: ${error.message}`, 'error');
+    console.error('[Hotmail] 导入失败:', error);
+  }
+});
+
+// 打开查看模态框
+btnViewHotmail.addEventListener('click', async () => {
+  await loadHotmailList();
+  hotmailViewModal.style.display = 'flex';
+});
+
+// 关闭查看模态框
+btnCloseViewModal.addEventListener('click', () => {
+  hotmailViewModal.style.display = 'none';
+});
+
+btnCloseView.addEventListener('click', () => {
+  hotmailViewModal.style.display = 'none';
+});
+
+// 加载邮箱列表
+async function loadHotmailList() {
+  try {
+    const emails = await hotmailManager.getAllEmails();
+    
+    if (emails.length === 0) {
+      hotmailList.innerHTML = '<p style="text-align:center;color:#999;padding:40px;">暂无邮箱数据</p>';
+      return;
+    }
+    
+    hotmailList.innerHTML = emails.map(email => `
+      <div class="hotmail-item">
+        <div class="hotmail-item-header">
+          <span class="hotmail-email">${escapeHtml(email.email)}</span>
+          <div class="hotmail-usage">
+            <span>${email.usageCount} / 6</span>
+            <span class="usage-badge ${email.usageCount >= 6 ? 'full' : 'available'}">
+              ${email.usageCount >= 6 ? '已满' : '可用'}
+            </span>
+          </div>
+        </div>
+        <div class="hotmail-item-details">
+          <span>最后使用:</span>
+          <span>${email.lastUsed ? new Date(email.lastUsed).toLocaleString('zh-CN') : '未使用'}</span>
+          <span>创建时间:</span>
+          <span>${new Date(email.createdAt).toLocaleString('zh-CN')}</span>
+        </div>
+        <div class="hotmail-item-actions">
+          <button class="btn btn-ghost btn-sm btn-delete-hotmail" data-email="${escapeHtml(email.email)}">删除</button>
+        </div>
+      </div>
+    `).join('');
+    
+    // 使用事件委托绑定删除按钮
+    hotmailList.querySelectorAll('.btn-delete-hotmail').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const email = btn.getAttribute('data-email');
+        if (!confirm(`确定要删除邮箱 ${email} 吗？`)) return;
+        
+        try {
+          await hotmailManager.deleteEmail(email);
+          await loadHotmailList();
+          await updateHotmailStats();
+          showToast('删除成功', 'success');
+          console.log('[Hotmail] 已删除邮箱:', email);
+        } catch (error) {
+          showToast(`删除失败: ${error.message}`, 'error');
+          console.error('[Hotmail] 删除失败:', error);
+        }
+      });
+    });
+  } catch (error) {
+    hotmailList.innerHTML = `<p style="text-align:center;color:#ef4444;padding:40px;">加载失败: ${error.message}</p>`;
+  }
+}
+
+// 删除邮箱函数（保留用于兼容性，但不再使用）
+window.deleteHotmailEmail = async function(email) {
+  if (!confirm(`确定要删除邮箱 ${email} 吗？`)) return;
+  
+  try {
+    await hotmailManager.deleteEmail(email);
+    await loadHotmailList();
+    await updateHotmailStats();
+    showToast('删除成功', 'success');
+    console.log('[Hotmail] 已删除邮箱:', email);
+  } catch (error) {
+    showToast(`删除失败: ${error.message}`, 'error');
+    console.error('[Hotmail] 删除失败:', error);
+  }
+};
+
+// 导出邮箱
+btnExportHotmail.addEventListener('click', async () => {
+  try {
+    const emails = await hotmailManager.exportEmails();
+    const json = JSON.stringify(emails, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `hotmail-emails-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    
+    showToast('导出成功', 'success');
+    console.log('[Hotmail] 已导出', emails.length, '个邮箱');
+  } catch (error) {
+    showToast(`导出失败: ${error.message}`, 'error');
+    console.error('[Hotmail] 导出失败:', error);
+  }
+});
+
+// 清空全部
+btnClearHotmail.addEventListener('click', async () => {
+  if (!confirm('确定要清空所有 Hotmail 邮箱数据吗？此操作不可恢复！')) return;
+  
+  try {
+    await hotmailManager.clearAll();
+    await loadHotmailList();
+    await updateHotmailStats();
+    showToast('已清空所有邮箱数据', 'success');
+    console.log('[Hotmail] 已清空所有邮箱数据');
+  } catch (error) {
+    showToast(`清空失败: ${error.message}`, 'error');
+    console.error('[Hotmail] 清空失败:', error);
+  }
+});
+
+// 更新统计信息
+async function updateHotmailStats() {
+  try {
+    const stats = await hotmailManager.getStats();
+    hotmailStats.textContent = `总计: ${stats.total} | 可用: ${stats.available} | 已满: ${stats.full}`;
+  } catch (error) {
+    hotmailStats.textContent = '统计信息加载失败';
+    console.error('[Hotmail] Stats update failed:', error);
+  }
+}
+
+// Toast 提示
+function showToast(message, type = 'info') {
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  toast.textContent = message;
+  
+  const container = document.getElementById('toast-container');
+  container.appendChild(toast);
+  
+  setTimeout(() => {
+    toast.classList.add('show');
+  }, 10);
+  
+  setTimeout(() => {
+    toast.classList.remove('show');
+    setTimeout(() => {
+      container.removeChild(toast);
+    }, 300);
+  }, 3000);
+}
+
+// 页面加载时初始化
+document.addEventListener('DOMContentLoaded', async () => {
+  await initHotmailManager();
+  
+  // 注意：邮箱类型、注册入口等配置会在 restoreState() 中从 IndexedDB 恢复
+  // 这里不需要重复恢复，避免冲突
 });

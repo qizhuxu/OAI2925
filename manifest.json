@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "OAI2925",
+  "name": "OAI2925-Hotmail",
   "version": "1.0.0",
-  "description": "OpenAI 自动注册工具 - 2925 邮箱专用",
+  "description": "OpenAI 自动注册工具 - 支持 2925 和 Hotmail 邮箱",
   "permissions": [
     "sidePanel",
     "tabs",
@@ -11,7 +11,8 @@
     "scripting",
     "activeTab",
     "downloads",
-    "debugger"
+    "debugger",
+    "cookies"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -27,7 +28,8 @@
       "matches": [
         "https://auth0.openai.com/*",
         "https://auth.openai.com/*",
-        "https://accounts.openai.com/*"
+        "https://accounts.openai.com/*",
+        "https://chatgpt.com/*"
       ],
       "js": ["content/utils.js", "content/signup-page.js"],
       "run_at": "document_idle"

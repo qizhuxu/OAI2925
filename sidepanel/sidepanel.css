@@ -997,3 +997,342 @@ header {
 .accounts-list::-webkit-scrollbar-thumb:hover {
   background: var(--text-muted);
 }
+
+
+/* ============================================================
+   Hotmail 邮箱管理样式
+   ============================================================ */
+
+#hotmail-section {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.hotmail-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-secondary {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+}
+
+.btn-secondary:hover {
+  background: var(--bg-hover);
+  border-color: var(--blue);
+  color: var(--blue);
+}
+
+/* 模态框样式 */
+.modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.modal-content {
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  width: 90%;
+  max-width: 600px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.modal-content.modal-large {
+  max-width: 800px;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface);
+  border-radius: 12px 12px 0 0;
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 28px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: all 0.2s;
+  line-height: 1;
+}
+
+.modal-close:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.modal-body {
+  padding: 20px;
+  overflow-y: auto;
+  flex: 1;
+  background: var(--bg-base);
+}
+
+.modal-footer {
+  padding: 16px 20px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  background: var(--bg-surface);
+  border-radius: 0 0 12px 12px;
+}
+
+/* 导入标签页 */
+.import-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.import-tab {
+  padding: 8px 16px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--text-secondary);
+  transition: all 0.2s;
+}
+
+.import-tab:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.import-tab.active {
+  background: var(--blue);
+  color: white;
+  border-color: var(--blue);
+}
+
+.import-tab-content {
+  animation: fadeIn 0.2s;
+}
+
+.import-hint {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  background: var(--bg-surface);
+  border-radius: 6px;
+  border-left: 3px solid var(--blue);
+}
+
+.import-textarea {
+  width: 100%;
+  min-height: 200px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.import-textarea:focus {
+  outline: none;
+  border-color: var(--blue);
+  background: var(--bg-base);
+}
+
+#hotmail-import-file {
+  width: 100%;
+  padding: 12px;
+  border: 2px dashed var(--border);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  cursor: pointer;
+  color: var(--text-primary);
+}
+
+#hotmail-import-file:hover {
+  border-color: var(--blue);
+  background: var(--bg-hover);
+}
+
+/* Hotmail 列表 */
+.hotmail-list-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.hotmail-list {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.hotmail-item {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  background: var(--bg-surface);
+  transition: all 0.2s;
+}
+
+.hotmail-item:hover {
+  background: var(--bg-hover);
+  border-color: var(--blue);
+}
+
+.hotmail-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.hotmail-email {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.hotmail-usage {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.usage-badge {
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.usage-badge.available {
+  background: rgba(34, 197, 94, 0.15);
+  color: var(--green);
+}
+
+.usage-badge.full {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--red);
+}
+
+.hotmail-item-details {
+  font-size: 12px;
+  color: var(--text-secondary);
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+}
+
+.hotmail-item-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+}
+
+.btn-danger {
+  background: var(--red);
+  color: white;
+  border: none;
+}
+
+.btn-danger:hover {
+  opacity: 0.9;
+  box-shadow: 0 2px 8px var(--red-soft);
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+
+/* Toast 提示样式 */
+#toast-container {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.toast {
+  padding: 12px 20px;
+  border-radius: 8px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  font-size: 14px;
+  min-width: 200px;
+  max-width: 400px;
+  opacity: 0;
+  transform: translateX(100px);
+  transition: all 0.3s ease;
+}
+
+.toast.show {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.toast-success {
+  border-left: 4px solid #10b981;
+  color: #10b981;
+}
+
+.toast-error {
+  border-left: 4px solid #ef4444;
+  color: #ef4444;
+}
+
+.toast-info {
+  border-left: 4px solid #3b82f6;
+  color: #3b82f6;
+}

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>OAI2925</title>
+  <title>OAI2925-Hotmail</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -15,7 +15,7 @@
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
       </svg>
-      <h1>OAI2925</h1>
+      <h1>OAI2925-Hotmail</h1>
     </div>
     <div class="header-btns">
       <div class="run-group">
@@ -45,6 +45,20 @@
     <div class="data-card">
       <div class="mode-selector-section">
         <div class="data-row">
+          <span class="data-label">邮箱类型</span>
+          <select id="select-email-type" class="mode-select">
+            <option value="2925">2925 邮箱</option>
+            <option value="hotmail">Hotmail 邮箱</option>
+          </select>
+        </div>
+        <div class="data-row">
+          <span class="data-label">注册入口</span>
+          <select id="select-signup-entry" class="mode-select">
+            <option value="oauth">OAuth 授权（默认）</option>
+            <option value="chatgpt">ChatGPT 注册</option>
+          </select>
+        </div>
+        <div class="data-row">
           <span class="data-label">运行模式</span>
           <select id="select-run-mode" class="mode-select">
             <option value="cpa">CPA 模式（使用 CPA 接口）</option>
@@ -71,6 +85,57 @@
       <div class="data-row">
         <span class="data-label">邮箱前缀</span>
         <input type="text" id="input-email-prefix" class="data-input" placeholder="输入前缀，如 abc (将生成 abc_xxxx@2925.com)" />
+      </div>
+      <div class="data-row">
+        <span class="data-label">默认密码</span>
+        <div class="data-input-group">
+          <input type="password" id="input-default-password" class="data-input" placeholder="留空则随机生成" />
+          <button id="btn-toggle-default-password" class="btn-icon" title="显示/隐藏">
+            <svg class="icon-eye" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+            <svg class="icon-eye-off" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;">
+              <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+              <line x1="1" y1="1" x2="23" y2="23"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div class="data-row">
+        <button id="btn-save-config" class="btn btn-primary" style="width: 100%;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+            <polyline points="17 21 17 13 7 13 7 21"/>
+            <polyline points="7 3 7 8 15 8"/>
+          </svg>
+          保存配置
+        </button>
+      </div>
+      
+      <!-- Hotmail 邮箱管理区域 -->
+      <div id="hotmail-section" style="display:none;">
+        <div class="data-row">
+          <span class="data-label">Hotmail 邮箱</span>
+          <div class="hotmail-actions">
+            <button id="btn-import-hotmail" class="btn btn-secondary btn-sm">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+              导入邮箱
+            </button>
+            <button id="btn-view-hotmail" class="btn btn-secondary btn-sm">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+              </svg>
+              查看邮箱
+            </button>
+          </div>
+        </div>
+        <div class="data-row">
+          <span class="data-label">邮箱统计</span>
+          <span id="hotmail-stats" class="data-value">总计: 0 | 可用: 0 | 已满: 0</span>
+        </div>
       </div>
       <div class="data-row">
         <span class="data-label">生成邮箱</span>
@@ -321,6 +386,69 @@
   </section>
 
   <div id="toast-container"></div>
+  
+  <!-- Hotmail 导入模态框 -->
+  <div id="hotmail-import-modal" class="modal" style="display:none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>导入 Hotmail 邮箱</h3>
+        <button class="modal-close" id="btn-close-import-modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="import-tabs">
+          <button class="import-tab active" data-tab="text">文本输入</button>
+          <button class="import-tab" data-tab="file">文件导入</button>
+        </div>
+        
+        <div id="import-tab-text" class="import-tab-content">
+          <p class="import-hint">格式: 邮箱----密码----client_id----refresh_token（每行一个）</p>
+          <textarea id="hotmail-import-text" class="import-textarea" placeholder="example@hotmail.com----password123----client_id_here----refresh_token_here" rows="10"></textarea>
+        </div>
+        
+        <div id="import-tab-file" class="import-tab-content" style="display:none;">
+          <p class="import-hint">支持 TXT 和 JSON 格式文件</p>
+          <input type="file" id="hotmail-import-file" accept=".txt,.json" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-confirm-import" class="btn btn-primary">确认导入</button>
+        <button id="btn-cancel-import" class="btn btn-ghost">取消</button>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Hotmail 查看模态框 -->
+  <div id="hotmail-view-modal" class="modal" style="display:none;">
+    <div class="modal-content modal-large">
+      <div class="modal-header">
+        <h3>Hotmail 邮箱管理</h3>
+        <button class="modal-close" id="btn-close-view-modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="hotmail-list-actions">
+          <button id="btn-export-hotmail" class="btn btn-secondary btn-sm">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            导出
+          </button>
+          <button id="btn-clear-hotmail" class="btn btn-danger btn-sm">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+            </svg>
+            清空全部
+          </button>
+        </div>
+        <div id="hotmail-list" class="hotmail-list"></div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-close-view" class="btn btn-ghost">关闭</button>
+      </div>
+    </div>
+  </div>
+  
+  <script src="../lib/hotmail-manager.js"></script>
+  <script src="../lib/apple-api.js"></script>
   <script src="sidepanel.js"></script>
 </body>
 </html>

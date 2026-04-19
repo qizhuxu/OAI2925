@@ -1,6 +1,8 @@
 ﻿// background.js — Service Worker: orchestration, state, tab management, message routing
 
 importScripts('data/names.js');
+importScripts('lib/hotmail-manager.js');
+importScripts('lib/apple-api.js');
 
 const LOG_PREFIX = '[MultiPage:bg]';
 const LOCAL_OAUTH_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
@@ -29,6 +31,7 @@ const DEFAULT_STATE = {
   logs: [],
   vpsUrl: '',
   emailPrefix: '', // 2925 邮箱前缀
+  defaultPassword: '', // 默认密码（留空则随机生成）
   oauthCodeVerifier: null,
   oauthState: null,
   manualIntervention: null,
@@ -37,6 +40,7 @@ const DEFAULT_STATE = {
   incognitoMode: false,
   localMode: false,
   cpaManagementKey: '', // CPA 管理密钥
+  signupEntry: 'oauth', // 注册入口：oauth 或 chatgpt
 };
 
 async function getState() {
@@ -59,7 +63,7 @@ async function resetState() {
   await closeIncognitoWindow();
   
   // Preserve settings and persistent data across resets
-  const prev = await chrome.storage.session.get(['seenCodes', 'accounts', 'tabRegistry', 'vpsUrl', 'emailPrefix', 'cpaManagementKey']);
+  const prev = await chrome.storage.session.get(['seenCodes', 'accounts', 'tabRegistry', 'vpsUrl', 'emailPrefix', 'defaultPassword', 'cpaManagementKey', 'signupEntry']);
   await chrome.storage.session.clear();
   await chrome.storage.session.set({
     ...DEFAULT_STATE,
@@ -68,7 +72,9 @@ async function resetState() {
     tabRegistry: prev.tabRegistry || {},
     vpsUrl: prev.vpsUrl || '',
     emailPrefix: prev.emailPrefix || '',
+    defaultPassword: prev.defaultPassword || '',
     cpaManagementKey: prev.cpaManagementKey || '',
+    signupEntry: prev.signupEntry || 'oauth',
   });
 }
 
@@ -96,6 +102,23 @@ function generatePassword() {
 
   // Shuffle
   return pw.split('').sort(() => Math.random() - 0.5).join('');
+}
+
+/**
+ * Get password: use default password if set, otherwise generate random
+ */
+async function getPassword() {
+  const state = await getState();
+  
+  // 如果设置了默认密码，使用默认密码
+  if (state.defaultPassword && state.defaultPassword.trim()) {
+    await addLog('Using default password', 'info');
+    return state.defaultPassword.trim();
+  }
+  
+  // 否则生成随机密码
+  await addLog('Generating random password', 'info');
+  return generatePassword();
 }
 
 function base64UrlEncode(bytes) {
@@ -393,6 +416,15 @@ async function getTabId(source) {
 // ============================================================
 
 const pendingCommands = new Map(); // source -> { message, resolve, reject, timer }
+
+function clearPendingCommands() {
+  for (const [source, pending] of pendingCommands.entries()) {
+    clearTimeout(pending.timer);
+    pending.reject(new Error('Command cancelled - new flow starting'));
+  }
+  pendingCommands.clear();
+  console.log(LOG_PREFIX, 'Cleared all pending commands');
+}
 
 function queueCommand(source, message, timeout = 15000) {
   return new Promise((resolve, reject) => {
@@ -740,6 +772,21 @@ async function handleMessage(message, sender) {
       return { ok: true };
     }
 
+    case 'CONTENT_SCRIPT_UNLOADING': {
+      // Content script is about to unload (page navigation)
+      const source = message.source;
+      if (source) {
+        const registry = await getTabRegistry();
+        if (registry[source]) {
+          registry[source].ready = false;
+          await setState({ tabRegistry: registry });
+          await addLog(`Content script unloading: ${source}`, 'info');
+          console.log(LOG_PREFIX, `Marked ${source} as not ready (page unloading)`);
+        }
+      }
+      return { ok: true };
+    }
+
     case 'PAGE_RELOADING': {
       // 页面即将重新加载（由全局错误监测器触发）
       await addLog(`[${message.source}] Page is reloading due to error retry`, 'warn');
@@ -949,11 +996,13 @@ async function handleMessage(message, sender) {
       const updates = {};
       if (message.payload.vpsUrl !== undefined) updates.vpsUrl = message.payload.vpsUrl;
       if (message.payload.emailPrefix !== undefined) updates.emailPrefix = message.payload.emailPrefix;
+      if (message.payload.defaultPassword !== undefined) updates.defaultPassword = message.payload.defaultPassword;
       if (message.payload.saveToLocal !== undefined) updates.saveToLocal = message.payload.saveToLocal;
       if (message.payload.localSavePath !== undefined) updates.localSavePath = message.payload.localSavePath;
       if (message.payload.incognitoMode !== undefined) updates.incognitoMode = message.payload.incognitoMode;
       if (message.payload.localMode !== undefined) updates.localMode = message.payload.localMode;
       if (message.payload.cpaManagementKey !== undefined) updates.cpaManagementKey = message.payload.cpaManagementKey;
+      if (message.payload.signupEntry !== undefined) updates.signupEntry = message.payload.signupEntry;
       await setState(updates);
       await addLog(`Settings saved: ${JSON.stringify(updates)}`, 'info');
       return { ok: true };
@@ -1005,7 +1054,11 @@ async function handleStepData(step, payload) {
     case 9:
       // Step 9 完成后，尝试下载认证文件（如果启用了本地保存）
       // 注意：下载失败不应该阻塞流程，只记录警告
-      await addLog('Step 9: VPS 验证完成，开始下载认证文件...', 'info');
+      await addLog('Step 9: VPS 验证完成，等待 1 秒后开始下载认证文件...', 'info');
+      
+      // 等待 1 秒，让服务器有时间生成文件
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
       try {
         const state = await getState();
         await downloadAuthFile(state);
@@ -1621,32 +1674,54 @@ async function autoRunLoop(totalRuns) {
       incognitoMode: prevState.incognitoMode,
       localMode: prevState.localMode,
       cpaManagementKey: prevState.cpaManagementKey || '',
+      signupEntry: prevState.signupEntry || 'oauth',  // 保留注册入口设置
+      defaultPassword: prevState.defaultPassword || '',  // 保留默认密码设置
       autoRunning: true,
     };
     await resetState();
     await setState(keepSettings);
-    // Tell side panel to reset all UI
+    
+    // 先发送 running 状态，确保 UI 显示停止按钮
+    const status = (phase) => ({ type: 'AUTO_RUN_STATUS', payload: { phase, currentRun: run, totalRuns } });
+    chrome.runtime.sendMessage(status('running')).catch(() => {});
+    
+    // 然后重置 UI 显示（但不影响按钮状态）
     chrome.runtime.sendMessage({ type: 'AUTO_RUN_RESET' }).catch(() => {});
     await sleepRandom(400, 900);
 
     await addLog(`=== Auto Run ${run}/${totalRuns} — Phase 1: Get OAuth link & open signup ===`, 'info');
-    const status = (phase) => ({ type: 'AUTO_RUN_STATUS', payload: { phase, currentRun: run, totalRuns } });
 
     try {
-      chrome.runtime.sendMessage(status('running')).catch(() => {});
-
       await executeStepWithManualFallback(1, run, totalRuns, 2600, 3800);
+      
+      // ChatGPT 注册模式：Step 1 点击"免费注册"后页面会跳转，等待页面加载
+      const currentState = await getState();
+      if (currentState.signupEntry === 'chatgpt') {
+        await addLog('等待页面跳转到 auth.openai.com...', 'info');
+        await sleepRandom(2000, 3000);
+      }
+      
       await executeStepWithManualFallback(2, run, totalRuns, 2600, 3800);
 
 
-      // 检查 2925 邮箱前缀是否设置
+      // 检查邮箱配置
       const runState = await getState();
-      if (!runState.emailPrefix) {
+      const { emailType } = await chrome.storage.local.get('emailType');
+      
+      // 2925 模式需要检查邮箱前缀
+      if (emailType !== 'hotmail' && !runState.emailPrefix) {
         await addLog('Cannot continue: 2925 邮箱前缀未设置，请在侧边栏填写。', 'error');
         chrome.runtime.sendMessage(status('stopped')).catch(() => {});
         break;
       }
-      await addLog(`=== Run ${run}/${totalRuns} — 将在步骤3自动生成 2925 邮箱 ===`, 'info');
+      
+      // Hotmail 模式需要检查是否有可用邮箱
+      if (emailType === 'hotmail') {
+        // 这里暂时跳过检查，在 executeStep3 中会检查
+        await addLog(`=== Run ${run}/${totalRuns} — 使用 Hotmail 邮箱模式 ===`, 'info');
+      } else {
+        await addLog(`=== Run ${run}/${totalRuns} — 将在步骤3自动生成 2925 邮箱 ===`, 'info');
+      }
 
       await addLog(`=== Run ${run}/${totalRuns} — Phase 2: Register, verify, login, complete ===`, 'info');
       chrome.runtime.sendMessage(status('running')).catch(() => {});
@@ -1667,6 +1742,30 @@ async function autoRunLoop(totalRuns) {
       }
 
       await executeStepWithManualFallback(5, run, totalRuns, 3200, 4800);
+      
+      // Step 5 完成后立即更新 Hotmail 邮箱使用次数
+      // 因为此时 OpenAI 账户已经创建成功，邮箱已被使用
+      if (emailType === 'hotmail') {
+        try {
+          const { currentHotmailData } = await chrome.storage.session.get('currentHotmailData');
+          
+          if (currentHotmailData) {
+            const hotmailManager = new HotmailManager();
+            await hotmailManager.init();
+            await hotmailManager.incrementUsage(currentHotmailData.email);
+            
+            const newCount = currentHotmailData.usageCount + 1;
+            await addLog(`✅ 邮箱 ${currentHotmailData.email} 使用次数已更新: ${newCount}/6`, 'ok');
+            
+            if (newCount >= 6) {
+              await addLog(`⚠️ 邮箱 ${currentHotmailData.email} 已达使用上限`, 'warn');
+            }
+          }
+        } catch (error) {
+          await addLog(`更新使用次数失败: ${error.message}`, 'error');
+        }
+      }
+      
       await executeStepWithManualFallback(6, run, totalRuns, 3200, 4800);
       await executeStepWithManualFallback(7, run, totalRuns, 3200, 4800, 600000);
 
@@ -1693,6 +1792,11 @@ async function autoRunLoop(totalRuns) {
       }
       
       await executeStepWithManualFallback(9, run, totalRuns, 1600, 2600);
+
+      // 清理 Hotmail session 数据
+      if (emailType === 'hotmail') {
+        await chrome.storage.session.remove(['currentHotmailData', 'currentEmailAlias']);
+      }
 
       await addLog(`=== Run ${run}/${totalRuns} COMPLETE! ===`, 'ok');
 
@@ -1766,6 +1870,73 @@ function waitForResume() {
 // ============================================================
 
 async function executeStep1(state) {
+  // Clear any pending commands from previous runs
+  clearPendingCommands();
+  
+  // 清除 registry 中的旧数据，避免误判
+  const registry = await getTabRegistry();
+  delete registry['chatgpt'];
+  delete registry['signup-page'];
+  await setState({ tabRegistry: registry });
+  await addLog('Step 1: 已清除旧的 tab registry 数据', 'info');
+  
+  // ChatGPT 注册入口：直接打开 chatgpt.com
+  if (state.signupEntry === 'chatgpt') {
+    await addLog('Step 1: ChatGPT 注册入口，清除 Cookie 并打开 chatgpt.com...');
+    
+    // 清除 chatgpt.com 和 openai.com 相关域名的 Cookie，确保是未登录状态
+    try {
+      // 检查是否有cookies权限
+      if (!chrome.cookies) {
+        await addLog('Step 1: 缺少 cookies 权限，无法清除 Cookie', 'error');
+        return;
+      }
+
+      const domainsToClean = ['chatgpt.com', 'openai.com', 'auth.openai.com', 'auth0.openai.com'];
+      let totalCookiesCleared = 0;
+      
+      for (const domain of domainsToClean) {
+        try {
+          const cookies = await chrome.cookies.getAll({ domain });
+          await addLog(`Step 1: 找到 ${domain} 的 ${cookies.length} 个 Cookie`);
+          
+          for (const cookie of cookies) {
+            await chrome.cookies.remove({
+              url: `https://${domain}${cookie.path}`,
+              name: cookie.name
+            });
+            totalCookiesCleared++;
+          }
+        } catch (domainErr) {
+          await addLog(`Step 1: 清除 ${domain} Cookie 失败: ${domainErr.message}`, 'warn');
+        }
+      }
+      
+      await addLog(`Step 1: Cookie 清除完成，共清除 ${totalCookiesCleared} 个`, 'ok');
+    } catch (err) {
+      await addLog(`Step 1: 清除 Cookie 失败: ${err.message}`, 'warn');
+      // 继续执行，不阻塞流程
+    }
+    
+    // 如果启用无痕模式，在无痕窗口中打开
+    if (state.incognitoMode) {
+      await createIncognitoTab('chatgpt', 'https://chatgpt.com');
+    } else {
+      await reuseOrCreateTab('chatgpt', 'https://chatgpt.com');
+    }
+    
+    // 通知 content script 执行 ChatGPT 注册流程的 Step 1
+    await sendToContentScript('chatgpt', {
+      type: 'EXECUTE_STEP',
+      step: 1,
+      source: 'background',
+      payload: { signupEntry: 'chatgpt' },
+    });
+    
+    return;
+  }
+  
+  // OAuth 授权入口（原有逻辑）
   // 本地模式：使用本地生成的 OAuth 链接
   if (state.localMode) {
     const local = await buildLocalOAuthUrl();
@@ -1806,6 +1977,83 @@ async function executeStep1(state) {
 // ============================================================
 
 async function executeStep2(state) {
+  // ChatGPT 注册入口：Step 2 填写邮箱
+  if (state.signupEntry === 'chatgpt') {
+    await addLog('Step 2: ChatGPT 注册入口，准备填写邮箱...');
+    
+    // 生成邮箱（如果还没有）
+    let email = state.email;
+    if (!email) {
+      const { emailType } = await chrome.storage.local.get('emailType');
+      
+      if (emailType === 'hotmail') {
+        const hotmailManager = new HotmailManager();
+        await hotmailManager.init();
+        const emailData = await hotmailManager.getNextAvailableEmail();
+        const alias = hotmailManager.generateAlias(emailData.email, emailData.usageCount);
+        
+        email = alias;
+        await setState({
+          email: alias,
+          currentHotmailData: emailData,
+        });
+        
+        await addLog(`Step 2: 使用 Hotmail 邮箱: ${alias}`);
+      } else {
+        const prefix = state.emailPrefix || 'test';
+        const suffix = generateRandomSuffix(6);
+        email = `${prefix}_${suffix}@2925.com`;
+        await setState({ email });
+        
+        await addLog(`Step 2: 使用 2925 邮箱: ${email}`);
+      }
+    }
+    
+    // 生成密码
+    const password = await getPassword();
+    await setState({ password });
+    
+    // 智能判断使用哪个 source：检查 registry 中的 ready 状态
+    // 注意：Step 1 点击"免费注册"后页面会跳转，需要等待新页面加载
+    const registry = await getTabRegistry();
+    const chatgptReady = registry['chatgpt']?.ready;
+    const signupPageReady = registry['signup-page']?.ready;
+    
+    let targetSource = 'chatgpt';
+    
+    // 如果 chatgpt 还在且 ready，说明还没跳转
+    if (chatgptReady && !signupPageReady) {
+      targetSource = 'chatgpt';
+      await addLog('Step 2: Still on chatgpt.com, using chatgpt source');
+    } 
+    // 如果 signup-page ready 且 chatgpt 不 ready，说明已经跳转
+    else if (signupPageReady && !chatgptReady) {
+      targetSource = 'signup-page';
+      await addLog('Step 2: Page has transitioned to auth.openai.com, using signup-page source');
+    }
+    // 如果两个都 ready（不太可能）或都不 ready（页面跳转中）
+    else {
+      // 默认等待 signup-page（因为 Step 1 点击后会跳转）
+      targetSource = 'signup-page';
+      await addLog('Step 2: Waiting for signup-page content script (page transitioning)');
+    }
+    
+    // 通知 content script 填写邮箱
+    await sendToContentScript(targetSource, {
+      type: 'EXECUTE_STEP',
+      step: 2,
+      source: 'background',
+      payload: { 
+        signupEntry: 'chatgpt',
+        email,
+        password
+      },
+    });
+    
+    return;
+  }
+  
+  // OAuth 授权入口（原有逻辑）
   if (!state.oauthUrl) {
     throw new Error('No OAuth URL. Complete step 1 first.');
   }
@@ -1839,22 +2087,110 @@ function generateRandomSuffix(length = 6) {
 }
 
 async function executeStep3(state) {
+  // ChatGPT 注册入口：Step 3 填写密码
+  if (state.signupEntry === 'chatgpt') {
+    await addLog('Step 3: ChatGPT 注册入口，准备填写密码...');
+    
+    // 密码应该在 Step 2 已经生成
+    if (!state.password) {
+      throw new Error('No password generated. This should not happen.');
+    }
+    
+    // 智能判断使用哪个 source：检查 registry 中的 ready 状态
+    // Step 2 点击"继续"后页面会跳转到 auth.openai.com，所以 Step 3 更可能在 signup-page 执行
+    const registry = await getTabRegistry();
+    const chatgptReady = registry['chatgpt']?.ready;
+    const signupPageReady = registry['signup-page']?.ready;
+    
+    let targetSource = 'signup-page';
+    if (signupPageReady) {
+      // signup-page 已经准备好，说明已经跳转
+      targetSource = 'signup-page';
+      await addLog('Step 3: Page has transitioned to auth.openai.com, using signup-page source');
+    } else if (chatgptReady) {
+      // chatgpt 还在，说明还没跳转（不太可能，但以防万一）
+      targetSource = 'chatgpt';
+      await addLog('Step 3: Still on chatgpt.com, using chatgpt source');
+    } else {
+      // 都没准备好，等待 signup-page（因为 Step 3 更可能在跳转后执行）
+      targetSource = 'signup-page';
+      await addLog('Step 3: Waiting for signup-page content script to be ready');
+    }
+    
+    // 通知 content script 填写密码
+    await sendToContentScript(targetSource, {
+      type: 'EXECUTE_STEP',
+      step: 3,
+      source: 'background',
+      payload: { 
+        signupEntry: 'chatgpt',
+        password: state.password
+      },
+    });
+    
+    return;
+  }
+  
+  // OAuth 授权入口（原有逻辑）
   let email = state.email;
 
-  // 自动生成 2925 邮箱：前缀 + _ + 随机4位 + @2925.com
-  if (!state.emailPrefix) {
-    throw new Error('2925 邮箱前缀未设置，请在侧边栏填写。');
+  // 获取邮箱类型
+  const { emailType } = await chrome.storage.local.get('emailType');
+  
+  if (emailType === 'hotmail') {
+    // === Hotmail 模式 ===
+    await addLog('Step 3: 使用 Hotmail 邮箱模式', 'info');
+    
+    try {
+      // 初始化管理器
+      const hotmailManager = new HotmailManager();
+      await hotmailManager.init();
+      
+      // 获取下一个可用邮箱
+      const emailData = await hotmailManager.getNextAvailableEmail();
+      await addLog(`Step 3: 选择邮箱 ${emailData.email} (使用次数: ${emailData.usageCount}/6)`, 'info');
+      
+      // 生成别名
+      const alias = hotmailManager.generateAlias(emailData.email, emailData.usageCount);
+      await addLog(`Step 3: 生成别名 ${alias}`, 'info');
+      
+      // 保存当前使用的邮箱信息
+      await chrome.storage.session.set({
+        currentHotmailData: emailData,
+        currentEmailAlias: alias
+      });
+      
+      email = alias;
+      await setState({ email });
+      
+      await addLog(`Step 3: Hotmail 邮箱已设置: ${email}`);
+      chrome.runtime.sendMessage({
+        type: 'DATA_UPDATED',
+        payload: { generatedEmail: email },
+      }).catch(() => {});
+      
+    } catch (error) {
+      await addLog(`Step 3: Hotmail 邮箱获取失败: ${error.message}`, 'error');
+      throw error;
+    }
+    
+  } else {
+    // === 2925 模式 ===
+    // 自动生成 2925 邮箱：前缀 + _ + 随机4位 + @2925.com
+    if (!state.emailPrefix) {
+      throw new Error('2925 邮箱前缀未设置，请在侧边栏填写。');
+    }
+    email = `${state.emailPrefix}_${generateRandomSuffix(4)}@2925.com`;
+    await setState({ email });
+    await addLog(`Step 3: 2925 邮箱已生成: ${email}`);
+    chrome.runtime.sendMessage({
+      type: 'DATA_UPDATED',
+      payload: { generatedEmail: email },
+    }).catch(() => {});
   }
-  email = `${state.emailPrefix}_${generateRandomSuffix(4)}@2925.com`;
-  await setState({ email });
-  await addLog(`Step 3: 2925 邮箱已生成: ${email}`);
-  chrome.runtime.sendMessage({
-    type: 'DATA_UPDATED',
-    payload: { generatedEmail: email },
-  }).catch(() => {});
 
   // Generate a unique password for this account
-  const password = generatePassword();
+  const password = await getPassword();
   await setState({ password });
   
   // 通知侧边栏显示密码
@@ -1895,6 +2231,68 @@ function getMailConfig(state) {
 }
 
 async function executeStep4(state) {
+  // 获取邮箱类型
+  const { emailType } = await chrome.storage.local.get('emailType');
+  
+  if (emailType === 'hotmail') {
+    // === Hotmail 模式：使用小苹果 API ===
+    await addLog('Step 4: 通过小苹果 API 获取注册验证码...');
+    
+    try {
+      const { currentHotmailData } = await chrome.storage.session.get('currentHotmailData');
+      
+      if (!currentHotmailData) {
+        throw new Error('未找到 Hotmail 邮箱信息');
+      }
+      
+      const appleAPI = new AppleMailAPI();
+      
+      // 获取验证码（自动重试，检查收件箱和垃圾箱）
+      await addLog('Step 4: 正在获取验证码（最多尝试 10 次）...');
+      const result = await appleAPI.getVerificationCode({
+        refreshToken: currentHotmailData.refreshToken,
+        clientId: currentHotmailData.clientId,
+        email: currentHotmailData.email
+      }, 10, 3000);
+      
+      await addLog(`Step 4: ✅ 在 ${result.mailbox} 找到验证码: ${result.code}`, 'ok');
+      
+      // 清空邮箱（防止下次混淆）
+      await addLog('Step 4: 清空邮箱...');
+      await appleAPI.clearAllMailboxes({
+        refreshToken: currentHotmailData.refreshToken,
+        clientId: currentHotmailData.clientId,
+        email: currentHotmailData.email
+      });
+      await addLog('Step 4: 邮箱已清空', 'ok');
+      
+      // 保存验证码
+      await setState({ signupVerificationCode: result.code });
+      
+      // 填写验证码到注册页面
+      const signupTabId = await getTabId('signup-page');
+      if (!signupTabId) {
+        throw new Error('注册页面已关闭，无法填写验证码');
+      }
+      
+      await chrome.tabs.update(signupTabId, { active: true });
+      await sendToContentScript('signup-page', {
+        type: 'FILL_CODE',
+        step: 4,
+        source: 'background',
+        payload: { code: result.code },
+      });
+      
+      await addLog('Step 4: 验证码已填写', 'ok');
+      return;
+      
+    } catch (error) {
+      await addLog(`Step 4: 获取验证码失败: ${error.message}`, 'error');
+      throw error;
+    }
+  }
+  
+  // === 2925 模式（原有逻辑）===
   const mail = getMailConfig(state);
   await addLog(`Step 4: Opening ${mail.label}...`);
 
@@ -2039,7 +2437,14 @@ async function executeStep5(state) {
     type: 'EXECUTE_STEP',
     step: 5,
     source: 'background',
-    payload: { firstName, lastName, year, month, day },
+    payload: { 
+      firstName, 
+      lastName, 
+      year, 
+      month, 
+      day,
+      signupEntry: state.signupEntry  // 传递注册入口类型
+    },
   });
 }
 
@@ -2048,9 +2453,68 @@ async function executeStep5(state) {
 // ============================================================
 
 async function executeStep6(state) {
+  // ChatGPT 注册入口：需要先获取 OAuth URL
+  if (state.signupEntry === 'chatgpt' && !state.oauthUrl) {
+    await addLog('Step 6: ChatGPT 注册完成，现在获取 OAuth URL...');
+    
+    // 根据运行模式获取 OAuth URL
+    if (state.localMode) {
+      // 本地模式：生成本地 OAuth 链接
+      const local = await buildLocalOAuthUrl();
+      await setState({
+        oauthUrl: local.oauthUrl,
+        oauthCodeVerifier: local.codeVerifier,
+        oauthState: local.state,
+      });
+      
+      await addLog('Step 6: 本地模式，已生成 OAuth 链接', 'ok');
+      
+      chrome.runtime.sendMessage({
+        type: 'DATA_UPDATED',
+        payload: { oauthUrl: local.oauthUrl },
+      }).catch(() => {});
+    } else {
+      // CPA 模式：从 CPA 面板获取 OAuth 链接
+      await addLog('Step 6: CPA 模式，正在打开 CPA 面板获取 OAuth 链接...');
+      await reuseOrCreateTab('vps-panel', state.vpsUrl, { 
+        inject: ['content/utils.js', 'content/vps-panel.js'],
+        reloadIfSameUrl: true
+      });
+
+      await sendToContentScript('vps-panel', {
+        type: 'EXECUTE_STEP',
+        step: 1,  // 使用 Step 1 的逻辑获取 OAuth URL
+        source: 'background',
+        payload: {},
+      });
+      
+      // 等待 OAuth URL 获取完成
+      await waitForStepComplete(1, 60000);
+      
+      // 重新获取 state（OAuth URL 应该已经设置）
+      const newState = await getState();
+      if (!newState.oauthUrl) {
+        throw new Error('Failed to get OAuth URL from CPA panel');
+      }
+      
+      await addLog('Step 6: OAuth URL 已获取', 'ok');
+    }
+    
+    // 重新获取 state
+    const updatedState = await getState();
+    // 继续执行 Step 6 的登录逻辑
+    return executeStep6Login(updatedState);
+  }
+  
+  // OAuth 授权入口或已有 OAuth URL 的情况
   if (!state.oauthUrl) {
     throw new Error('No OAuth URL. Complete step 1 first.');
   }
+  
+  return executeStep6Login(state);
+}
+
+async function executeStep6Login(state) {
   if (!state.email) {
     throw new Error('No email. Complete step 3 first.');
   }
@@ -2084,6 +2548,68 @@ async function executeStep6(state) {
 // ============================================================
 
 async function executeStep7(state) {
+  // 获取邮箱类型
+  const { emailType } = await chrome.storage.local.get('emailType');
+  
+  if (emailType === 'hotmail') {
+    // === Hotmail 模式：使用小苹果 API ===
+    await addLog('Step 7: 通过小苹果 API 获取登录验证码...');
+    
+    try {
+      const { currentHotmailData } = await chrome.storage.session.get('currentHotmailData');
+      
+      if (!currentHotmailData) {
+        throw new Error('未找到 Hotmail 邮箱信息');
+      }
+      
+      const appleAPI = new AppleMailAPI();
+      
+      // 获取验证码
+      await addLog('Step 7: 正在获取验证码（最多尝试 10 次）...');
+      const result = await appleAPI.getVerificationCode({
+        refreshToken: currentHotmailData.refreshToken,
+        clientId: currentHotmailData.clientId,
+        email: currentHotmailData.email
+      }, 10, 3000);
+      
+      await addLog(`Step 7: ✅ 在 ${result.mailbox} 找到验证码: ${result.code}`, 'ok');
+      
+      // 清空邮箱
+      await addLog('Step 7: 清空邮箱...');
+      await appleAPI.clearAllMailboxes({
+        refreshToken: currentHotmailData.refreshToken,
+        clientId: currentHotmailData.clientId,
+        email: currentHotmailData.email
+      });
+      await addLog('Step 7: 邮箱已清空', 'ok');
+      
+      // 保存验证码
+      await setState({ loginVerificationCode: result.code });
+      
+      // 填写验证码到登录页面
+      const signupTabId = await getTabId('signup-page');
+      if (!signupTabId) {
+        throw new Error('登录页面已关闭，无法填写验证码');
+      }
+      
+      await chrome.tabs.update(signupTabId, { active: true });
+      await sendToContentScript('signup-page', {
+        type: 'FILL_CODE',
+        step: 7,
+        source: 'background',
+        payload: { code: result.code },
+      });
+      
+      await addLog('Step 7: 验证码已填写', 'ok');
+      return;
+      
+    } catch (error) {
+      await addLog(`Step 7: 获取验证码失败: ${error.message}`, 'error');
+      throw error;
+    }
+  }
+  
+  // === 2925 模式（原有逻辑）===
   const mail = getMailConfig(state);
   await addLog(`Step 7: Opening ${mail.label}...`);
 
@@ -2672,8 +3198,9 @@ async function downloadAuthFile(state) {
     
     await addLog(`Step 9: VPS 基础 URL: ${baseUrl}`, 'info');
     
-    // 构建下载 URL
-    const filename = `codex-${email}-free.json`;
+    // 构建下载 URL - 将邮箱转换为小写
+    const emailLowerCase = email.toLowerCase();
+    const filename = `codex-${emailLowerCase}-free.json`;
     const downloadUrl = `${baseUrl}/v0/management/auth-files/download?name=${encodeURIComponent(filename)}`;
     
     await addLog(`Step 9: 正在下载认证文件: ${filename}`, 'info');
@@ -2831,7 +3358,9 @@ async function saveAuthFileToLocal(authData, email) {
   const now = new Date();
   const dateFolder = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   
-  const filename = `codex-${email}-free.json`;
+  // 将邮箱转换为小写
+  const emailLowerCase = email.toLowerCase();
+  const filename = `codex-${emailLowerCase}-free.json`;
   
   // 获取当前模式
   const state = await getState();

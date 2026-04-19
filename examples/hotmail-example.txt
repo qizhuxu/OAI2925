@@ -1,0 +1,7 @@
+# Hotmail 邮箱导入示例文件
+# 格式: 邮箱----密码----client_id----refresh_token
+# 每行一个邮箱信息
+
+example1@hotmail.com----password123----9e5f94bc-e8a4-4e73-b8be-63364c29d753----M.C537_BAY.0.U.-CoqaiIScf81pZz4fS*UpwwmQN9KjoSXmDN7dY1Em5Wfrn5S12d
+example2@outlook.com----mypass456----8d4e83ab-d7b3-4d62-a7cd-52253b18c642----M.C537_BAY.0.U.-DprbijJTdg92qAa5gT*VqxwmQN9KjoSXmDN7dY1Em5Wfrn5S12d
+example3@live.com----testpass789----7c3d72ba-c6a2-3c51-96bc-41142a07b531----M.C537_BAY.0.U.-EqscbjKUeh03rBb6hU*WrywmQN9KjoSXmDN7dY1Em5Wfrn5S12d
